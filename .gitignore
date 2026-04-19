@@ -1,0 +1,19 @@
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Gradle (backend)
+backend/.gradle/
+backend/build/
+backend/out/
+
+# IDE (repo root)
+.idea/
+*.iml
+.vscode/
+
+# Logs / env (never commit secrets)
+*.log
+.env
+.env.*
