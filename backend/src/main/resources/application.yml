@@ -1,0 +1,21 @@
+# PostgreSQL 은 Docker Compose 로 띄운다고 가정 (저장소 루트: docker compose up -d).
+# 기본 URL/계정은 compose 의 marketengine DB 와 동일. 덮어쓰려면 SPRING_DATASOURCE_* 환경 변수 사용.
+spring:
+  application:
+    name: backend
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/marketengine}
+    username: ${SPRING_DATASOURCE_USERNAME:marketengine}
+    password: ${SPRING_DATASOURCE_PASSWORD:marketengine}
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        format_sql: true
+
+  mvc:
+    throw-exception-if-no-handler-found: true

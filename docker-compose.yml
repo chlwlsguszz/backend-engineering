@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: marketengine
+      POSTGRES_USER: marketengine
+      POSTGRES_PASSWORD: marketengine
+    ports:
+      - "5432:5432"
+    volumes:
+      - marketengine-pgdata:/var/lib/postgresql/data
+
+volumes:
+  marketengine-pgdata:
