@@ -53,13 +53,13 @@ public class Order {
     protected Order() {
     }
 
-    public Order(Member member, Product product, int quantity, BigDecimal unitPrice, OrderStatus status, BigDecimal totalAmount) {
+    public Order(Member member, Product product, int quantity, BigDecimal unitPrice, OrderStatus status) {
         this.member = member;
         this.product = product;
         this.quantity = quantity;
         this.unitPrice = unitPrice;
         this.status = status;
-        this.totalAmount = totalAmount;
+        this.totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity));
     }
 
     public Long getId() {
@@ -98,8 +98,8 @@ public class Order {
         this.status = status;
     }
 
-    public void changeQuantityAndTotal(int quantity, BigDecimal totalAmount) {
+    public void changeQuantity(int quantity) {
         this.quantity = quantity;
-        this.totalAmount = totalAmount;
+        this.totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity));
     }
 }
