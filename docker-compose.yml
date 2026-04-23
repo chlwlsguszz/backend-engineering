@@ -7,8 +7,38 @@ services:
       POSTGRES_PASSWORD: marketengine
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketengine -d marketengine"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     volumes:
       - marketengine-pgdata:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/marketengine
+      SPRING_DATASOURCE_USERNAME: marketengine
+      SPRING_DATASOURCE_PASSWORD: marketengine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      BACKEND_ORIGIN: http://backend:8080
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
 
 volumes:
   marketengine-pgdata:
