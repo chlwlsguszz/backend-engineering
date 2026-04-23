@@ -7,6 +7,9 @@ RUN npm ci
 FROM node:22-alpine AS builder
 WORKDIR /app
 
+ARG BACKEND_ORIGIN=http://localhost:8080
+ENV BACKEND_ORIGIN=$BACKEND_ORIGIN
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
