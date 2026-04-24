@@ -33,6 +33,7 @@ export default function Home() {
   const [selectedCategory, setSelectedCategory] = useState("ALL");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [sortBy, setSortBy] = useState<"VIEW" | "POPULARITY">("VIEW");
+  const [selectedBrand, setSelectedBrand] = useState("ALL");
   const [selectedGender, setSelectedGender] = useState("ALL");
   const [selectedColor, setSelectedColor] = useState("ALL");
   const [minPrice, setMinPrice] = useState("");
@@ -50,6 +51,11 @@ export default function Home() {
 
   const genders = useMemo(
     () => ["ALL", ...Array.from(new Set(products.map((product) => product.gender)))],
+    [products],
+  );
+
+  const brands = useMemo(
+    () => ["ALL", ...Array.from(new Set(products.map((product) => product.brand)))],
     [products],
   );
 
@@ -90,6 +96,7 @@ export default function Home() {
         product.brand.toLowerCase().includes(normalized);
       const matchedCategory =
         selectedCategory === "ALL" || product.category === selectedCategory;
+      const matchedBrand = selectedBrand === "ALL" || product.brand === selectedBrand;
       const matchedGender = selectedGender === "ALL" || product.gender === selectedGender;
       const matchedColor = selectedColor === "ALL" || product.color === selectedColor;
       const matchedMin = min === null || Number(product.priceAmount) >= min;
@@ -97,13 +104,14 @@ export default function Home() {
       return (
         matchedKeyword &&
         matchedCategory &&
+        matchedBrand &&
         matchedGender &&
         matchedColor &&
         matchedMin &&
         matchedMax
       );
     });
-  }, [products, keyword, selectedCategory, selectedGender, selectedColor, minPrice, maxPrice]);
+  }, [products, keyword, selectedCategory, selectedBrand, selectedGender, selectedColor, minPrice, maxPrice]);
 
   const filteredProducts = useMemo(() => {
     const cloned = [...searchedProducts];
@@ -214,7 +222,7 @@ export default function Home() {
           </div>
 
           {isFilterOpen && (
-            <div className="mt-4 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-5">
+            <div className="mt-4 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-6">
               <input
                 value={minPrice}
                 onChange={(event) => {
@@ -243,6 +251,20 @@ export default function Home() {
               >
                 <option value="VIEW">조회순</option>
                 <option value="POPULARITY">인기순</option>
+              </select>
+              <select
+                value={selectedBrand}
+                onChange={(event) => {
+                  setSelectedBrand(event.target.value);
+                  setCurrentPage(1);
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black"
+              >
+                {brands.map((brand) => (
+                  <option key={brand} value={brand}>
+                    {brand === "ALL" ? "브랜드 전체" : brand}
+                  </option>
+                ))}
               </select>
               <select
                 value={selectedGender}
