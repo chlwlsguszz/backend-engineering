@@ -67,6 +67,16 @@ export default function Home() {
     HAT: "모자",
   };
 
+  const categoryImageText: Record<(typeof categories)[number], string> = {
+    ALL: "APPAREL",
+    TOP: "TOP",
+    BOTTOM: "BOTTOM",
+    OUTER: "OUTER",
+    SHOES: "SHOES",
+    GLASSES: "GLASSES",
+    HAT: "CAP",
+  };
+
   const searchedProducts = useMemo(() => {
     const normalized = keyword.trim().toLowerCase();
     const min = minPrice.trim() === "" ? null : Number(minPrice);
@@ -271,7 +281,7 @@ export default function Home() {
                 className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300"
               >
                 <Image
-                  src={`https://placehold.co/600x400/f8fafc/334155?text=${encodeURIComponent(product.brand)}`}
+                  src={`https://placehold.co/600x400/png?text=${categoryImageText[product.category]}&font=inter`}
                   alt={product.name}
                   width={600}
                   height={400}
