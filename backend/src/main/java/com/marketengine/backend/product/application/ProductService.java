@@ -8,7 +8,8 @@ import org.springframework.transaction.annotation.Transactional;
 import com.marketengine.backend.common.exception.BusinessException;
 import com.marketengine.backend.common.exception.ErrorCode;
 import com.marketengine.backend.product.api.ProductDtos.CreateProductRequest;
-import com.marketengine.backend.product.api.ProductDtos.ProductResponse;
+import com.marketengine.backend.product.api.ProductDtos.ProductDetailResponse;
+import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
 import com.marketengine.backend.product.api.ProductDtos.UpdateProductRequest;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductRepository;
@@ -24,26 +25,44 @@ public class ProductService {
     }
 
     @Transactional
-    public ProductResponse create(CreateProductRequest request) {
+    public ProductDetailResponse create(CreateProductRequest request) {
         Product saved = productRepository.save(
-                new Product(request.name(), request.priceAmount(), request.stockQuantity())
+                new Product(
+                        request.name(),
+                        request.priceAmount(),
+                        request.stockQuantity(),
+                        request.description(),
+                        request.category(),
+                        request.brand(),
+                        request.status(),
+                        request.popularityScore()
+                )
         );
-        return ProductResponse.from(saved);
+        return ProductDetailResponse.from(saved);
     }
 
-    public ProductResponse get(Long productId) {
-        return ProductResponse.from(findProduct(productId));
+    public ProductDetailResponse get(Long productId) {
+        return ProductDetailResponse.from(findProduct(productId));
     }
 
-    public List<ProductResponse> list() {
-        return productRepository.findAll().stream().map(ProductResponse::from).toList();
+    public List<ProductSummaryResponse> list() {
+        return productRepository.findAll().stream().map(ProductSummaryResponse::from).toList();
     }
 
     @Transactional
-    public ProductResponse update(Long productId, UpdateProductRequest request) {
+    public ProductDetailResponse update(Long productId, UpdateProductRequest request) {
         Product product = findProduct(productId);
-        product.changeInfo(request.name(), request.priceAmount(), request.stockQuantity());
-        return ProductResponse.from(product);
+        product.changeInfo(
+                request.name(),
+                request.priceAmount(),
+                request.stockQuantity(),
+                request.description(),
+                request.category(),
+                request.brand(),
+                request.status(),
+                request.popularityScore()
+        );
+        return ProductDetailResponse.from(product);
     }
 
     @Transactional

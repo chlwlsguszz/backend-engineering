@@ -18,7 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import com.marketengine.backend.common.exception.BusinessException;
 import com.marketengine.backend.common.exception.ErrorCode;
 import com.marketengine.backend.product.api.ProductDtos.CreateProductRequest;
-import com.marketengine.backend.product.api.ProductDtos.ProductResponse;
+import com.marketengine.backend.product.api.ProductDtos.ProductDetailResponse;
 import com.marketengine.backend.product.api.ProductDtos.UpdateProductRequest;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductRepository;
@@ -34,11 +34,20 @@ class ProductServiceTest {
 
     @Test
     void create_savesAndReturnsResponse() {
-        CreateProductRequest request = new CreateProductRequest("keyboard", new BigDecimal("120.00"), 10);
+        CreateProductRequest request = new CreateProductRequest(
+                "keyboard",
+                new BigDecimal("120.00"),
+                10,
+                "mechanical keyboard",
+                "ELECTRONICS",
+                "ACME",
+                "ACTIVE",
+                800
+        );
 
         when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        ProductResponse response = productService.create(request);
+        ProductDetailResponse response = productService.create(request);
 
         assertThat(response.name()).isEqualTo("keyboard");
         assertThat(response.priceAmount()).isEqualByComparingTo("120.00");
@@ -57,13 +66,36 @@ class ProductServiceTest {
 
     @Test
     void update_changesProductFields() {
-        Product product = new Product("old", new BigDecimal("10.00"), 1);
+        Product product = new Product(
+                "old",
+                new BigDecimal("10.00"),
+                1,
+                "old desc",
+                "BOOKS",
+                "NOVA",
+                "ACTIVE",
+                10
+        );
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
 
-        ProductResponse response = productService.update(1L, new UpdateProductRequest("new", new BigDecimal("20.00"), 2));
+        ProductDetailResponse response = productService.update(
+                1L,
+                new UpdateProductRequest(
+                        "new",
+                        new BigDecimal("20.00"),
+                        2,
+                        "new desc",
+                        "HOME",
+                        "ZEN",
+                        "ACTIVE",
+                        500
+                )
+        );
 
         assertThat(response.name()).isEqualTo("new");
         assertThat(response.priceAmount()).isEqualByComparingTo("20.00");
         assertThat(response.stockQuantity()).isEqualTo(2);
+        assertThat(response.category()).isEqualTo("HOME");
+        assertThat(response.popularityScore()).isEqualTo(500);
     }
 }

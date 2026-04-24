@@ -45,7 +45,16 @@ class OrderServiceTest {
     @Test
     void create_buildsOrderWithProductPrice() {
         Member member = new Member("user@test.com", "pw", "user");
-        Product product = new Product("book", new BigDecimal("30.00"), 5);
+        Product product = new Product(
+                "book",
+                new BigDecimal("30.00"),
+                5,
+                "book detail",
+                "BOOKS",
+                "CORE",
+                "ACTIVE",
+                100
+        );
 
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
         when(productRepository.findById(2L)).thenReturn(Optional.of(product));
@@ -70,7 +79,16 @@ class OrderServiceTest {
     @Test
     void update_changesStatusAndQuantity() {
         Member member = new Member("user@test.com", "pw", "user");
-        Product product = new Product("book", new BigDecimal("30.00"), 5);
+        Product product = new Product(
+                "book",
+                new BigDecimal("30.00"),
+                5,
+                "book detail",
+                "BOOKS",
+                "CORE",
+                "ACTIVE",
+                100
+        );
         Order order = new Order(member, product, 1, new BigDecimal("30.00"), OrderStatus.CREATED);
         when(orderRepository.findById(10L)).thenReturn(Optional.of(order));
 

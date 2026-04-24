@@ -27,16 +27,48 @@ public class Product {
     @Column(name = "stock_quantity", nullable = false)
     private int stockQuantity;
 
+    @Column(nullable = false, columnDefinition = "TEXT")
+    private String description;
+
+    @Column(nullable = false, length = 100)
+    private String category;
+
+    @Column(nullable = false, length = 100)
+    private String brand;
+
+    @Column(nullable = false, length = 32)
+    private String status;
+
+    @Column(name = "popularity_score", nullable = false)
+    private int popularityScore;
+
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private OffsetDateTime createdAt;
+
+    @Column(name = "updated_at", nullable = false, insertable = false, updatable = false)
+    private OffsetDateTime updatedAt;
 
     protected Product() {
     }
 
-    public Product(String name, BigDecimal priceAmount, int stockQuantity) {
+    public Product(
+            String name,
+            BigDecimal priceAmount,
+            int stockQuantity,
+            String description,
+            String category,
+            String brand,
+            String status,
+            int popularityScore
+    ) {
         this.name = name;
         this.priceAmount = priceAmount;
         this.stockQuantity = stockQuantity;
+        this.description = description;
+        this.category = category;
+        this.brand = brand;
+        this.status = status;
+        this.popularityScore = popularityScore;
     }
 
     public Long getId() {
@@ -59,9 +91,47 @@ public class Product {
         return createdAt;
     }
 
-    public void changeInfo(String name, BigDecimal priceAmount, int stockQuantity) {
+    public OffsetDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public String getCategory() {
+        return category;
+    }
+
+    public String getBrand() {
+        return brand;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public int getPopularityScore() {
+        return popularityScore;
+    }
+
+    public void changeInfo(
+            String name,
+            BigDecimal priceAmount,
+            int stockQuantity,
+            String description,
+            String category,
+            String brand,
+            String status,
+            int popularityScore
+    ) {
         this.name = name;
         this.priceAmount = priceAmount;
         this.stockQuantity = stockQuantity;
+        this.description = description;
+        this.category = category;
+        this.brand = brand;
+        this.status = status;
+        this.popularityScore = popularityScore;
     }
 }

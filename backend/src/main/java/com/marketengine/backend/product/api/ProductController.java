@@ -14,7 +14,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.marketengine.backend.common.response.ApiResponse;
 import com.marketengine.backend.product.api.ProductDtos.CreateProductRequest;
-import com.marketengine.backend.product.api.ProductDtos.ProductResponse;
+import com.marketengine.backend.product.api.ProductDtos.ProductDetailResponse;
+import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
 import com.marketengine.backend.product.api.ProductDtos.UpdateProductRequest;
 import com.marketengine.backend.product.application.ProductService;
 
@@ -31,22 +32,22 @@ public class ProductController {
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse<ProductResponse>> create(@Valid @RequestBody CreateProductRequest request) {
+    public ResponseEntity<ApiResponse<ProductDetailResponse>> create(@Valid @RequestBody CreateProductRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(productService.create(request)));
     }
 
     @GetMapping("/{productId}")
-    public ResponseEntity<ApiResponse<ProductResponse>> get(@PathVariable Long productId) {
+    public ResponseEntity<ApiResponse<ProductDetailResponse>> get(@PathVariable Long productId) {
         return ResponseEntity.ok(ApiResponse.ok(productService.get(productId)));
     }
 
     @GetMapping
-    public ResponseEntity<ApiResponse<List<ProductResponse>>> list() {
+    public ResponseEntity<ApiResponse<List<ProductSummaryResponse>>> list() {
         return ResponseEntity.ok(ApiResponse.ok(productService.list()));
     }
 
     @PutMapping("/{productId}")
-    public ResponseEntity<ApiResponse<ProductResponse>> update(
+    public ResponseEntity<ApiResponse<ProductDetailResponse>> update(
             @PathVariable Long productId,
             @Valid @RequestBody UpdateProductRequest request
     ) {
