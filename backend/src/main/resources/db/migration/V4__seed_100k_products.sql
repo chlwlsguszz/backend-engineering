@@ -1,6 +1,6 @@
 -- Add 100,000 apparel products for meaningful search/load testing.
 -- Naming rule: brand + gender + category-specific item name + color
--- Price rule: 10,000 ~ 400,000, step 100
+-- Price rule: 10,000 ~ 400,000, step 100 (mid-price skew: 40,000 ~ 180,000)
 
 WITH generated AS (
     SELECT
@@ -117,7 +117,12 @@ SELECT
                 ELSE 'Camp Cap'
             END
     END || ' ' || initcap(lower(g.color)) AS name,
-    (10000 + (floor(random() * 3901)::int * 100))::numeric(19, 4) AS price_amount,
+    (
+        CASE
+            WHEN random() < 0.70 THEN (40000 + (floor(random() * 1401)::int * 100))
+            ELSE (10000 + (floor(random() * 3901)::int * 100))
+        END
+    )::numeric(19, 4) AS price_amount,
     floor(random() * 300)::int AS stock_quantity,
     'Performance ' || lower(g.category) || ' product in ' || lower(g.color) || ' color' AS description,
     g.category,

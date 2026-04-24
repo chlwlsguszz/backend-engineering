@@ -2,6 +2,9 @@ package com.marketengine.backend.product.api;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
+
+import org.springframework.data.domain.Page;
 
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductCategory;
@@ -102,6 +105,26 @@ public final class ProductDtos {
                     product.getPopularityScore(),
                     product.getCreatedAt(),
                     product.getUpdatedAt()
+            );
+        }
+    }
+
+    public record ProductPageResponse(
+            List<ProductSummaryResponse> items,
+            int page,
+            int size,
+            long totalElements,
+            int totalPages,
+            boolean hasNext
+    ) {
+        public static ProductPageResponse from(Page<ProductSummaryResponse> pageResult) {
+            return new ProductPageResponse(
+                    pageResult.getContent(),
+                    pageResult.getNumber(),
+                    pageResult.getSize(),
+                    pageResult.getTotalElements(),
+                    pageResult.getTotalPages(),
+                    pageResult.hasNext()
             );
         }
     }

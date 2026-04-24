@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Product = {
   id: number;
@@ -26,10 +26,18 @@ type ApiEnvelope<T> = {
   };
 };
 
+type ProductPageResponse = {
+  items: Product[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  hasNext: boolean;
+};
+
 export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
   const [searchInput, setSearchInput] = useState("");
-  const [keyword, setKeyword] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("ALL");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [sortBy, setSortBy] = useState<"VIEW" | "POPULARITY">("VIEW");
@@ -38,7 +46,10 @@ export default function Home() {
   const [selectedColor, setSelectedColor] = useState("ALL");
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
-  const [currentPage, setCurrentPage] = useState(1);
+  const [keyword, setKeyword] = useState("");
+  const [currentPage, setCurrentPage] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalElements, setTotalElements] = useState(0);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [resultMessage, setResultMessage] = useState("");
 
@@ -49,19 +60,36 @@ export default function Home() {
     [],
   );
 
-  const genders = useMemo(
-    () => ["ALL", ...Array.from(new Set(products.map((product) => product.gender)))],
-    [products],
-  );
-
+  const genders = useMemo(() => ["ALL", "MEN", "WOMEN", "UNISEX"], []);
   const brands = useMemo(
-    () => ["ALL", ...Array.from(new Set(products.map((product) => product.brand)))],
-    [products],
+    () => [
+      "ALL",
+      "Nike",
+      "Adidas",
+      "Puma",
+      "New Balance",
+      "Under Armour",
+      "Converse",
+      "Reebok",
+      "Fila",
+      "Asics",
+      "Lululemon",
+      "Jordan",
+      "Vans",
+      "Skechers",
+      "Champion",
+      "Levis",
+      "Patagonia",
+      "The North Face",
+      "Columbia",
+      "Oakley",
+      "Carhartt",
+    ],
+    [],
   );
-
   const colors = useMemo(
-    () => ["ALL", ...Array.from(new Set(products.map((product) => product.color)))],
-    [products],
+    () => ["ALL", "BLACK", "WHITE", "NAVY", "GRAY", "BEIGE", "RED", "BLUE", "GREEN"],
+    [],
   );
 
   const categoryLabel: Record<(typeof categories)[number], string> = {
@@ -84,82 +112,53 @@ export default function Home() {
     HAT: "CAP",
   };
 
-  const searchedProducts = useMemo(() => {
-    const normalized = keyword.trim().toLowerCase();
-    const min = minPrice.trim() === "" ? null : Number(minPrice);
-    const max = maxPrice.trim() === "" ? null : Number(maxPrice);
-
-    return products.filter((product) => {
-      const matchedKeyword =
-        normalized.length === 0 ||
-        product.name.toLowerCase().includes(normalized) ||
-        product.brand.toLowerCase().includes(normalized);
-      const matchedCategory =
-        selectedCategory === "ALL" || product.category === selectedCategory;
-      const matchedBrand = selectedBrand === "ALL" || product.brand === selectedBrand;
-      const matchedGender = selectedGender === "ALL" || product.gender === selectedGender;
-      const matchedColor = selectedColor === "ALL" || product.color === selectedColor;
-      const matchedMin = min === null || Number(product.priceAmount) >= min;
-      const matchedMax = max === null || Number(product.priceAmount) <= max;
-      return (
-        matchedKeyword &&
-        matchedCategory &&
-        matchedBrand &&
-        matchedGender &&
-        matchedColor &&
-        matchedMin &&
-        matchedMax
-      );
-    });
-  }, [products, keyword, selectedCategory, selectedBrand, selectedGender, selectedColor, minPrice, maxPrice]);
-
-  const filteredProducts = useMemo(() => {
-    const cloned = [...searchedProducts];
-    if (sortBy === "POPULARITY") {
-      cloned.sort((a, b) => b.popularityScore - a.popularityScore || b.id - a.id);
-      return cloned;
-    }
-    cloned.sort(
-      (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime() || b.id - a.id,
-    );
-    return cloned;
-  }, [searchedProducts, sortBy]);
-
   function applyKeywordSearch() {
     setKeyword(searchInput);
-    setCurrentPage(1);
-    if (products.length === 0) {
-      void fetchProducts();
-    }
+    setCurrentPage(0);
   }
-
-  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / pageSize));
-
-  const pagedProducts = useMemo(() => {
-    const safePage = Math.min(currentPage, totalPages);
-    const start = (safePage - 1) * pageSize;
-    return filteredProducts.slice(start, start + pageSize);
-  }, [filteredProducts, currentPage, totalPages]);
 
   async function fetchProducts() {
     setLoadingProducts(true);
     setResultMessage("");
     try {
-      const response = await fetch("/backend/api/products");
-      const body: ApiEnvelope<Product[]> = await response.json();
+      const params = new URLSearchParams({
+        page: String(currentPage),
+        size: String(pageSize),
+        sortBy,
+      });
+      if (keyword.trim() !== "") params.set("keyword", keyword.trim());
+      if (selectedCategory !== "ALL") params.set("category", selectedCategory);
+      if (selectedBrand !== "ALL") params.set("brand", selectedBrand);
+      if (selectedGender !== "ALL") params.set("gender", selectedGender);
+      if (selectedColor !== "ALL") params.set("color", selectedColor);
+      if (minPrice.trim() !== "") params.set("minPrice", minPrice.trim());
+      if (maxPrice.trim() !== "") params.set("maxPrice", maxPrice.trim());
+
+      const response = await fetch(`/backend/api/products?${params.toString()}`);
+      const body: ApiEnvelope<ProductPageResponse> = await response.json();
       if (!response.ok || !body.success) {
         setResultMessage(body.error?.message ?? "상품 조회 실패");
+        setProducts([]);
+        setTotalPages(1);
+        setTotalElements(0);
         return;
       }
-      setProducts(body.data);
-      setCurrentPage(1);
+      setProducts(body.data.items);
+      setTotalPages(Math.max(1, body.data.totalPages));
+      setTotalElements(body.data.totalElements);
     } catch {
+      setProducts([]);
+      setTotalPages(1);
+      setTotalElements(0);
       setResultMessage("백엔드 연결 실패: 서버가 실행 중인지 확인하세요.");
     } finally {
       setLoadingProducts(false);
     }
   }
+
+  useEffect(() => {
+    void fetchProducts();
+  }, [currentPage, keyword, selectedCategory, selectedBrand, selectedGender, selectedColor, minPrice, maxPrice, sortBy]);
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-white via-slate-50 to-white">
@@ -176,7 +175,7 @@ export default function Home() {
                 type="button"
                 onClick={() => {
                   setSelectedCategory(category);
-                  setCurrentPage(1);
+                  setCurrentPage(0);
                 }}
                 className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
                   selectedCategory === category
@@ -227,7 +226,7 @@ export default function Home() {
                 value={minPrice}
                 onChange={(event) => {
                   setMinPrice(event.target.value);
-                  setCurrentPage(1);
+                  setCurrentPage(0);
                 }}
                 placeholder="최소 금액"
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black placeholder:text-slate-500"
@@ -236,7 +235,7 @@ export default function Home() {
                 value={maxPrice}
                 onChange={(event) => {
                   setMaxPrice(event.target.value);
-                  setCurrentPage(1);
+                  setCurrentPage(0);
                 }}
                 placeholder="최대 금액"
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black placeholder:text-slate-500"
@@ -245,7 +244,7 @@ export default function Home() {
                 value={sortBy}
                 onChange={(event) => {
                   setSortBy(event.target.value as "VIEW" | "POPULARITY");
-                  setCurrentPage(1);
+                  setCurrentPage(0);
                 }}
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black"
               >
@@ -256,7 +255,7 @@ export default function Home() {
                 value={selectedBrand}
                 onChange={(event) => {
                   setSelectedBrand(event.target.value);
-                  setCurrentPage(1);
+                  setCurrentPage(0);
                 }}
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black"
               >
@@ -270,7 +269,7 @@ export default function Home() {
                 value={selectedGender}
                 onChange={(event) => {
                   setSelectedGender(event.target.value);
-                  setCurrentPage(1);
+                  setCurrentPage(0);
                 }}
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black"
               >
@@ -284,7 +283,7 @@ export default function Home() {
                 value={selectedColor}
                 onChange={(event) => {
                   setSelectedColor(event.target.value);
-                  setCurrentPage(1);
+                  setCurrentPage(0);
                 }}
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black"
               >
@@ -298,7 +297,7 @@ export default function Home() {
           )}
 
           <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {pagedProducts.map((product) => (
+            {products.map((product) => (
               <Link key={product.id} href={`/products/${product.id}`} className="block">
                 <article className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300">
                 <Image
@@ -336,7 +335,7 @@ export default function Home() {
               </Link>
             ))}
 
-            {pagedProducts.length === 0 && (
+            {products.length === 0 && (
               <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500 sm:col-span-2 lg:col-span-3">
                 검색 결과가 없습니다.
               </div>
@@ -347,21 +346,21 @@ export default function Home() {
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm text-slate-600">
-              총 <span className="font-semibold text-slate-900">{filteredProducts.length}</span>개 상품
+              총 <span className="font-semibold text-slate-900">{totalElements}</span>개 상품
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                onClick={() => setCurrentPage((prev) => Math.max(0, prev - 1))}
                 className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 disabled:opacity-40"
-                disabled={currentPage <= 1}
+                disabled={currentPage <= 0}
               >
                 이전
               </button>
 
               <select
-                value={String(Math.min(currentPage, totalPages))}
-                onChange={(event) => setCurrentPage(Number(event.target.value))}
+                value={String(Math.min(currentPage + 1, totalPages))}
+                onChange={(event) => setCurrentPage(Number(event.target.value) - 1)}
                 className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
               >
                 {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
@@ -373,14 +372,15 @@ export default function Home() {
 
               <button
                 type="button"
-                onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                onClick={() => setCurrentPage((prev) => Math.min(totalPages - 1, prev + 1))}
                 className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 disabled:opacity-40"
-                disabled={currentPage >= totalPages}
+                disabled={currentPage + 1 >= totalPages}
               >
                 다음
               </button>
             </div>
           </div>
+          <p className="mt-2 text-xs text-slate-500">현재 페이지 크기: {pageSize}</p>
         </section>
 
         {resultMessage && (

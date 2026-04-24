@@ -1,7 +1,5 @@
 package com.marketengine.backend.product.api;
 
-import java.util.List;
-
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -10,14 +8,16 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.marketengine.backend.common.response.ApiResponse;
 import com.marketengine.backend.product.api.ProductDtos.CreateProductRequest;
 import com.marketengine.backend.product.api.ProductDtos.ProductDetailResponse;
-import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
+import com.marketengine.backend.product.api.ProductDtos.ProductPageResponse;
 import com.marketengine.backend.product.api.ProductDtos.UpdateProductRequest;
 import com.marketengine.backend.product.application.ProductService;
+import com.marketengine.backend.product.domain.ProductCategory;
 
 import jakarta.validation.Valid;
 
@@ -42,8 +42,33 @@ public class ProductController {
     }
 
     @GetMapping
-    public ResponseEntity<ApiResponse<List<ProductSummaryResponse>>> list() {
-        return ResponseEntity.ok(ApiResponse.ok(productService.list()));
+    public ResponseEntity<ApiResponse<ProductPageResponse>> list(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) ProductCategory category,
+            @RequestParam(required = false) String brand,
+            @RequestParam(required = false) String gender,
+            @RequestParam(required = false) String color,
+            @RequestParam(required = false) Integer minPrice,
+            @RequestParam(required = false) Integer maxPrice,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size
+    ) {
+        int normalizedPage = page == null ? 0 : Math.max(page, 0);
+        int normalizedSize = size == null ? 12 : Math.min(Math.max(size, 1), 100);
+        String normalizedSort = sortBy == null ? "VIEW" : sortBy;
+        return ResponseEntity.ok(ApiResponse.ok(productService.list(
+                keyword,
+                category,
+                brand,
+                gender,
+                color,
+                minPrice,
+                maxPrice,
+                normalizedSort,
+                normalizedPage,
+                normalizedSize
+        )));
     }
 
     @PutMapping("/{productId}")
