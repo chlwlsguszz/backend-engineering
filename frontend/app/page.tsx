@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 
 type Product = {
@@ -276,10 +277,8 @@ export default function Home() {
 
           <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {pagedProducts.map((product) => (
-              <article
-                key={product.id}
-                className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300"
-              >
+              <Link key={product.id} href={`/products/${product.id}`} className="block">
+                <article className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300">
                 <Image
                   src={`https://placehold.co/600x400/png?text=${categoryImageText[product.category]}&font=inter`}
                   alt={product.name}
@@ -311,7 +310,8 @@ export default function Home() {
                     {product.gender}
                   </span>
                 </div>
-              </article>
+                </article>
+              </Link>
             ))}
 
             {pagedProducts.length === 0 && (
