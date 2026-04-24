@@ -1,12 +1,19 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import Image from "next/image";
+import { useMemo, useState } from "react";
 
 type Product = {
   id: number;
   name: string;
   priceAmount: number;
   stockQuantity: number;
+  category: "TOP" | "BOTTOM" | "OUTER" | "SHOES" | "GLASSES" | "HAT";
+  brand: string;
+  color: string;
+  gender: string;
+  popularityScore: number;
+  createdAt: string;
 };
 
 type ApiEnvelope<T> = {
@@ -18,26 +25,103 @@ type ApiEnvelope<T> = {
   };
 };
 
-const INITIAL_ORDER_FORM = {
-  memberId: "1",
-  productId: "",
-  quantity: "1",
-};
-
 export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [searchInput, setSearchInput] = useState("");
   const [keyword, setKeyword] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("ALL");
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [sortBy, setSortBy] = useState<"VIEW" | "POPULARITY">("VIEW");
+  const [selectedGender, setSelectedGender] = useState("ALL");
+  const [selectedColor, setSelectedColor] = useState("ALL");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [loadingProducts, setLoadingProducts] = useState(false);
-  const [orderForm, setOrderForm] = useState(INITIAL_ORDER_FORM);
   const [resultMessage, setResultMessage] = useState("");
 
-  const filteredProducts = useMemo(() => {
+  const pageSize = 12;
+
+  const categories = useMemo(
+    () => ["ALL", "TOP", "BOTTOM", "OUTER", "SHOES", "GLASSES", "HAT"] as const,
+    [],
+  );
+
+  const genders = useMemo(
+    () => ["ALL", ...Array.from(new Set(products.map((product) => product.gender)))],
+    [products],
+  );
+
+  const colors = useMemo(
+    () => ["ALL", ...Array.from(new Set(products.map((product) => product.color)))],
+    [products],
+  );
+
+  const categoryLabel: Record<(typeof categories)[number], string> = {
+    ALL: "전체",
+    TOP: "상의",
+    BOTTOM: "하의",
+    OUTER: "아우터",
+    SHOES: "신발",
+    GLASSES: "안경",
+    HAT: "모자",
+  };
+
+  const searchedProducts = useMemo(() => {
     const normalized = keyword.trim().toLowerCase();
-    if (!normalized) return products;
-    return products.filter((product) =>
-      product.name.toLowerCase().includes(normalized),
+    const min = minPrice.trim() === "" ? null : Number(minPrice);
+    const max = maxPrice.trim() === "" ? null : Number(maxPrice);
+
+    return products.filter((product) => {
+      const matchedKeyword =
+        normalized.length === 0 ||
+        product.name.toLowerCase().includes(normalized) ||
+        product.brand.toLowerCase().includes(normalized);
+      const matchedCategory =
+        selectedCategory === "ALL" || product.category === selectedCategory;
+      const matchedGender = selectedGender === "ALL" || product.gender === selectedGender;
+      const matchedColor = selectedColor === "ALL" || product.color === selectedColor;
+      const matchedMin = min === null || Number(product.priceAmount) >= min;
+      const matchedMax = max === null || Number(product.priceAmount) <= max;
+      return (
+        matchedKeyword &&
+        matchedCategory &&
+        matchedGender &&
+        matchedColor &&
+        matchedMin &&
+        matchedMax
+      );
+    });
+  }, [products, keyword, selectedCategory, selectedGender, selectedColor, minPrice, maxPrice]);
+
+  const filteredProducts = useMemo(() => {
+    const cloned = [...searchedProducts];
+    if (sortBy === "POPULARITY") {
+      cloned.sort((a, b) => b.popularityScore - a.popularityScore || b.id - a.id);
+      return cloned;
+    }
+    cloned.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime() || b.id - a.id,
     );
-  }, [products, keyword]);
+    return cloned;
+  }, [searchedProducts, sortBy]);
+
+  function applyKeywordSearch() {
+    setKeyword(searchInput);
+    setCurrentPage(1);
+    if (products.length === 0) {
+      void fetchProducts();
+    }
+  }
+
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / pageSize));
+
+  const pagedProducts = useMemo(() => {
+    const safePage = Math.min(currentPage, totalPages);
+    const start = (safePage - 1) * pageSize;
+    return filteredProducts.slice(start, start + pageSize);
+  }, [filteredProducts, currentPage, totalPages]);
 
   async function fetchProducts() {
     setLoadingProducts(true);
@@ -50,9 +134,7 @@ export default function Home() {
         return;
       }
       setProducts(body.data);
-      if (body.data.length > 0 && !orderForm.productId) {
-        setOrderForm((prev) => ({ ...prev, productId: String(body.data[0].id) }));
-      }
+      setCurrentPage(1);
     } catch {
       setResultMessage("백엔드 연결 실패: 서버가 실행 중인지 확인하세요.");
     } finally {
@@ -60,134 +142,221 @@ export default function Home() {
     }
   }
 
-  async function handleCreateOrder(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setResultMessage("");
-    try {
-      const response = await fetch("/backend/api/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          memberId: Number(orderForm.memberId),
-          productId: Number(orderForm.productId),
-          quantity: Number(orderForm.quantity),
-        }),
-      });
-      const body: ApiEnvelope<{
-        id: number;
-        totalAmount: number;
-        status: string;
-      }> = await response.json();
-
-      if (!response.ok || !body.success) {
-        setResultMessage(`주문 실패: ${body.error?.message ?? "알 수 없는 오류"}`);
-        return;
-      }
-
-      setResultMessage(
-        `주문 성공 - orderId=${body.data.id}, total=${body.data.totalAmount}, status=${body.data.status}`,
-      );
-    } catch {
-      setResultMessage("주문 요청 실패: 백엔드 상태를 확인하세요.");
-    }
-  }
-
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-8 px-6 py-10">
-      <header>
-        <h1 className="text-2xl font-bold">Market Engine Frontend (Minimal)</h1>
-        <p className="mt-2 text-sm text-gray-600">
-          상품 조회/검색 및 주문 API 호출을 위한 최소 검증 화면
-        </p>
-      </header>
+    <main className="min-h-screen bg-gradient-to-b from-white via-slate-50 to-white">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-10">
+        <header className="py-2">
+          <h1 className="text-center text-4xl font-bold tracking-wide text-slate-900">MARKET ENGINE</h1>
+        </header>
 
-      <section className="rounded-lg border p-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={() => void fetchProducts()}
-            className="rounded bg-black px-4 py-2 text-sm text-white"
-            type="button"
-          >
-            상품 목록 새로고침
-          </button>
-          <input
-            value={keyword}
-            onChange={(event) => setKeyword(event.target.value)}
-            placeholder="상품명 검색"
-            className="w-60 rounded border px-3 py-2 text-sm"
-          />
-          {loadingProducts && <span className="text-sm text-gray-500">로딩 중...</span>}
-        </div>
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            {categories.map((category) => (
+              <button
+                key={category}
+                type="button"
+                onClick={() => {
+                  setSelectedCategory(category);
+                  setCurrentPage(1);
+                }}
+                className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                  selectedCategory === category
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-300 bg-white text-slate-700 hover:border-slate-500"
+                }`}
+              >
+                {categoryLabel[category]}
+              </button>
+            ))}
+          </div>
 
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b">
-                <th className="px-2 py-2">ID</th>
-                <th className="px-2 py-2">상품명</th>
-                <th className="px-2 py-2">가격</th>
-                <th className="px-2 py-2">재고</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredProducts.map((product) => (
-                <tr key={product.id} className="border-b">
-                  <td className="px-2 py-2">{product.id}</td>
-                  <td className="px-2 py-2">{product.name}</td>
-                  <td className="px-2 py-2">{product.priceAmount}</td>
-                  <td className="px-2 py-2">{product.stockQuantity}</td>
-                </tr>
-              ))}
-              {filteredProducts.length === 0 && (
-                <tr>
-                  <td className="px-2 py-4 text-gray-500" colSpan={4}>
-                    조회된 상품이 없습니다.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <input
+              value={searchInput}
+              onChange={(event) => {
+                setSearchInput(event.target.value);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  applyKeywordSearch();
+                }
+              }}
+              placeholder="검색어를 입력하세요"
+              className="w-72 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-black placeholder:text-slate-500 outline-none ring-slate-200 transition focus:ring"
+            />
+            <button
+              onClick={() => applyKeywordSearch()}
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
+              type="button"
+            >
+              검색
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsFilterOpen((prev) => !prev)}
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
+            >
+              필터 {isFilterOpen ? "접기" : "펼치기"}
+            </button>
+            {loadingProducts && <span className="text-sm text-slate-500">불러오는 중...</span>}
+          </div>
 
-      <section className="rounded-lg border p-4">
-        <h2 className="mb-3 text-lg font-semibold">주문 생성</h2>
-        <form className="grid gap-3 md:grid-cols-4" onSubmit={handleCreateOrder}>
-          <input
-            className="rounded border px-3 py-2 text-sm"
-            value={orderForm.memberId}
-            onChange={(event) =>
-              setOrderForm((prev) => ({ ...prev, memberId: event.target.value }))
-            }
-            placeholder="memberId"
-          />
-          <input
-            className="rounded border px-3 py-2 text-sm"
-            value={orderForm.productId}
-            onChange={(event) =>
-              setOrderForm((prev) => ({ ...prev, productId: event.target.value }))
-            }
-            placeholder="productId"
-          />
-          <input
-            className="rounded border px-3 py-2 text-sm"
-            value={orderForm.quantity}
-            onChange={(event) =>
-              setOrderForm((prev) => ({ ...prev, quantity: event.target.value }))
-            }
-            placeholder="quantity"
-          />
-          <button className="rounded bg-blue-600 px-4 py-2 text-sm text-white" type="submit">
-            주문 생성
-          </button>
-        </form>
-      </section>
+          {isFilterOpen && (
+            <div className="mt-4 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-5">
+              <input
+                value={minPrice}
+                onChange={(event) => {
+                  setMinPrice(event.target.value);
+                  setCurrentPage(1);
+                }}
+                placeholder="최소 금액"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black placeholder:text-slate-500"
+              />
+              <input
+                value={maxPrice}
+                onChange={(event) => {
+                  setMaxPrice(event.target.value);
+                  setCurrentPage(1);
+                }}
+                placeholder="최대 금액"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black placeholder:text-slate-500"
+              />
+              <select
+                value={sortBy}
+                onChange={(event) => {
+                  setSortBy(event.target.value as "VIEW" | "POPULARITY");
+                  setCurrentPage(1);
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black"
+              >
+                <option value="VIEW">조회순</option>
+                <option value="POPULARITY">인기순</option>
+              </select>
+              <select
+                value={selectedGender}
+                onChange={(event) => {
+                  setSelectedGender(event.target.value);
+                  setCurrentPage(1);
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black"
+              >
+                {genders.map((gender) => (
+                  <option key={gender} value={gender}>
+                    {gender === "ALL" ? "성별 전체" : gender}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={selectedColor}
+                onChange={(event) => {
+                  setSelectedColor(event.target.value);
+                  setCurrentPage(1);
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black"
+              >
+                {colors.map((color) => (
+                  <option key={color} value={color}>
+                    {color === "ALL" ? "색상 전체" : color}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
-      {resultMessage && (
-        <section className="rounded-lg border border-gray-300 bg-gray-50 p-3 text-sm">
-          {resultMessage}
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {pagedProducts.map((product) => (
+              <article
+                key={product.id}
+                className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300"
+              >
+                <Image
+                  src={`https://placehold.co/600x400/f8fafc/334155?text=${encodeURIComponent(product.brand)}`}
+                  alt={product.name}
+                  width={600}
+                  height={400}
+                  className="h-36 w-full rounded-xl border border-slate-200 object-cover"
+                />
+                <div className="flex items-center justify-between">
+                  <p className="mt-3 text-xs font-semibold text-slate-500">{product.brand}</p>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
+                    {categoryLabel[product.category]}
+                  </span>
+                </div>
+                <h3 className="mt-2 line-clamp-1 text-base font-semibold text-slate-900">
+                  {product.name}
+                </h3>
+                <p className="mt-3 text-lg font-bold text-slate-900">
+                  {Number(product.priceAmount).toLocaleString()}원
+                </p>
+                <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                  <span>재고 {product.stockQuantity}</span>
+                  <span>인기도 {product.popularityScore}</span>
+                </div>
+                <div className="mt-2 flex items-center gap-2 text-xs">
+                  <span className="rounded-full bg-white px-2 py-0.5 text-slate-600 ring-1 ring-slate-200">
+                    {product.color}
+                  </span>
+                  <span className="rounded-full bg-white px-2 py-0.5 text-slate-600 ring-1 ring-slate-200">
+                    {product.gender}
+                  </span>
+                </div>
+              </article>
+            ))}
+
+            {pagedProducts.length === 0 && (
+              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500 sm:col-span-2 lg:col-span-3">
+                검색 결과가 없습니다.
+              </div>
+            )}
+          </div>
         </section>
-      )}
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm text-slate-600">
+              총 <span className="font-semibold text-slate-900">{filteredProducts.length}</span>개 상품
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 disabled:opacity-40"
+                disabled={currentPage <= 1}
+              >
+                이전
+              </button>
+
+              <select
+                value={String(Math.min(currentPage, totalPages))}
+                onChange={(event) => setCurrentPage(Number(event.target.value))}
+                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+              >
+                {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
+                  <option key={pageNumber} value={pageNumber}>
+                    {pageNumber} / {totalPages}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 disabled:opacity-40"
+                disabled={currentPage >= totalPages}
+              >
+                다음
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {resultMessage && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-700 shadow-sm">
+            {resultMessage}
+          </section>
+        )}
+      </div>
     </main>
   );
 }

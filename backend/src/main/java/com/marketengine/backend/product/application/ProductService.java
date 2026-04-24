@@ -34,6 +34,8 @@ public class ProductService {
                         request.description(),
                         request.category(),
                         request.brand(),
+                        request.color(),
+                        request.gender(),
                         request.status(),
                         request.popularityScore()
                 )
@@ -59,6 +61,8 @@ public class ProductService {
                 request.description(),
                 request.category(),
                 request.brand(),
+                request.color(),
+                request.gender(),
                 request.status(),
                 request.popularityScore()
         );

@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
 import com.marketengine.backend.product.domain.Product;
+import com.marketengine.backend.product.domain.ProductCategory;
 
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -20,8 +21,10 @@ public final class ProductDtos {
             @NotNull @PositiveOrZero BigDecimal priceAmount,
             @Min(0) int stockQuantity,
             @NotBlank String description,
-            @NotBlank String category,
+            @NotNull ProductCategory category,
             @NotBlank String brand,
+            @NotBlank String color,
+            @NotBlank String gender,
             @NotBlank String status,
             @Min(0) int popularityScore
     ) {
@@ -32,8 +35,10 @@ public final class ProductDtos {
             @NotNull @PositiveOrZero BigDecimal priceAmount,
             @Min(0) int stockQuantity,
             @NotBlank String description,
-            @NotBlank String category,
+            @NotNull ProductCategory category,
             @NotBlank String brand,
+            @NotBlank String color,
+            @NotBlank String gender,
             @NotBlank String status,
             @Min(0) int popularityScore
     ) {
@@ -44,8 +49,10 @@ public final class ProductDtos {
             String name,
             BigDecimal priceAmount,
             int stockQuantity,
-            String category,
+            ProductCategory category,
             String brand,
+            String color,
+            String gender,
             int popularityScore,
             OffsetDateTime createdAt
     ) {
@@ -57,6 +64,8 @@ public final class ProductDtos {
                     product.getStockQuantity(),
                     product.getCategory(),
                     product.getBrand(),
+                    product.getColor(),
+                    product.getGender(),
                     product.getPopularityScore(),
                     product.getCreatedAt()
             );
@@ -69,8 +78,10 @@ public final class ProductDtos {
             BigDecimal priceAmount,
             int stockQuantity,
             String description,
-            String category,
+            ProductCategory category,
             String brand,
+            String color,
+            String gender,
             String status,
             int popularityScore,
             OffsetDateTime createdAt,
@@ -85,6 +96,8 @@ public final class ProductDtos {
                     product.getDescription(),
                     product.getCategory(),
                     product.getBrand(),
+                    product.getColor(),
+                    product.getGender(),
                     product.getStatus(),
                     product.getPopularityScore(),
                     product.getCreatedAt(),

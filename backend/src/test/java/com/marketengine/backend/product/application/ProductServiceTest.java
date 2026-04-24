@@ -21,6 +21,7 @@ import com.marketengine.backend.product.api.ProductDtos.CreateProductRequest;
 import com.marketengine.backend.product.api.ProductDtos.ProductDetailResponse;
 import com.marketengine.backend.product.api.ProductDtos.UpdateProductRequest;
 import com.marketengine.backend.product.domain.Product;
+import com.marketengine.backend.product.domain.ProductCategory;
 import com.marketengine.backend.product.domain.ProductRepository;
 
 @ExtendWith(MockitoExtension.class)
@@ -39,8 +40,10 @@ class ProductServiceTest {
                 new BigDecimal("120.00"),
                 10,
                 "mechanical keyboard",
-                "ELECTRONICS",
+                ProductCategory.TOP,
                 "ACME",
+                "BLACK",
+                "UNISEX",
                 "ACTIVE",
                 800
         );
@@ -71,8 +74,10 @@ class ProductServiceTest {
                 new BigDecimal("10.00"),
                 1,
                 "old desc",
-                "BOOKS",
+                ProductCategory.BOTTOM,
                 "NOVA",
+                "WHITE",
+                "MEN",
                 "ACTIVE",
                 10
         );
@@ -85,8 +90,10 @@ class ProductServiceTest {
                         new BigDecimal("20.00"),
                         2,
                         "new desc",
-                        "HOME",
+                        ProductCategory.OUTER,
                         "ZEN",
+                        "NAVY",
+                        "WOMEN",
                         "ACTIVE",
                         500
                 )
@@ -95,7 +102,7 @@ class ProductServiceTest {
         assertThat(response.name()).isEqualTo("new");
         assertThat(response.priceAmount()).isEqualByComparingTo("20.00");
         assertThat(response.stockQuantity()).isEqualTo(2);
-        assertThat(response.category()).isEqualTo("HOME");
+        assertThat(response.category()).isEqualTo(ProductCategory.OUTER);
         assertThat(response.popularityScore()).isEqualTo(500);
     }
 }

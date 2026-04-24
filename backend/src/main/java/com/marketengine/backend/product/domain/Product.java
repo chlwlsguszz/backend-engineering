@@ -5,6 +5,8 @@ import java.time.OffsetDateTime;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -30,11 +32,18 @@ public class Product {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String description;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 100)
-    private String category;
+    private ProductCategory category;
 
     @Column(nullable = false, length = 100)
     private String brand;
+
+    @Column(nullable = false, length = 50)
+    private String color;
+
+    @Column(nullable = false, length = 20)
+    private String gender;
 
     @Column(nullable = false, length = 32)
     private String status;
@@ -56,8 +65,10 @@ public class Product {
             BigDecimal priceAmount,
             int stockQuantity,
             String description,
-            String category,
+            ProductCategory category,
             String brand,
+            String color,
+            String gender,
             String status,
             int popularityScore
     ) {
@@ -67,6 +78,8 @@ public class Product {
         this.description = description;
         this.category = category;
         this.brand = brand;
+        this.color = color;
+        this.gender = gender;
         this.status = status;
         this.popularityScore = popularityScore;
     }
@@ -99,12 +112,20 @@ public class Product {
         return description;
     }
 
-    public String getCategory() {
+    public ProductCategory getCategory() {
         return category;
     }
 
     public String getBrand() {
         return brand;
+    }
+
+    public String getColor() {
+        return color;
+    }
+
+    public String getGender() {
+        return gender;
     }
 
     public String getStatus() {
@@ -120,8 +141,10 @@ public class Product {
             BigDecimal priceAmount,
             int stockQuantity,
             String description,
-            String category,
+            ProductCategory category,
             String brand,
+            String color,
+            String gender,
             String status,
             int popularityScore
     ) {
@@ -131,6 +154,8 @@ public class Product {
         this.description = description;
         this.category = category;
         this.brand = brand;
+        this.color = color;
+        this.gender = gender;
         this.status = status;
         this.popularityScore = popularityScore;
     }

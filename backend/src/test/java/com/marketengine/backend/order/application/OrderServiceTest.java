@@ -25,6 +25,7 @@ import com.marketengine.backend.order.domain.Order;
 import com.marketengine.backend.order.domain.OrderRepository;
 import com.marketengine.backend.order.domain.OrderStatus;
 import com.marketengine.backend.product.domain.Product;
+import com.marketengine.backend.product.domain.ProductCategory;
 import com.marketengine.backend.product.domain.ProductRepository;
 
 @ExtendWith(MockitoExtension.class)
@@ -50,8 +51,10 @@ class OrderServiceTest {
                 new BigDecimal("30.00"),
                 5,
                 "book detail",
-                "BOOKS",
+                ProductCategory.TOP,
                 "CORE",
+                "BLACK",
+                "UNISEX",
                 "ACTIVE",
                 100
         );
@@ -84,8 +87,10 @@ class OrderServiceTest {
                 new BigDecimal("30.00"),
                 5,
                 "book detail",
-                "BOOKS",
+                ProductCategory.TOP,
                 "CORE",
+                "BLACK",
+                "UNISEX",
                 "ACTIVE",
                 100
         );
