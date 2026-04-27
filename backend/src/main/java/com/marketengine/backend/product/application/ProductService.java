@@ -3,8 +3,6 @@ package com.marketengine.backend.product.application;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -64,39 +62,18 @@ public class ProductService {
             int page,
             int size
     ) {
-        Sort sort = "POPULARITY".equalsIgnoreCase(sortBy)
-                ? Sort.by(Sort.Direction.DESC, "popularityScore").and(Sort.by(Sort.Direction.DESC, "id"))
-                : Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.DESC, "id"));
-        Pageable pageable = PageRequest.of(page, size, sort);
-
-        Specification<Product> spec = (root, query, cb) -> cb.conjunction();
-        if (hasText(keyword)) {
-            String normalizedKeyword = "%" + keyword.trim().toLowerCase() + "%";
-            spec = spec.and((root, query, cb) -> cb.or(
-                    cb.like(cb.lower(root.get("name")), normalizedKeyword),
-                    cb.like(cb.lower(root.get("brand")), normalizedKeyword)
-            ));
-        }
-        if (category != null) {
-            spec = spec.and((root, query, cb) -> cb.equal(root.get("category"), category));
-        }
-        if (hasText(brand)) {
-            spec = spec.and((root, query, cb) -> cb.equal(root.get("brand"), brand.trim()));
-        }
-        if (hasText(gender)) {
-            spec = spec.and((root, query, cb) -> cb.equal(root.get("gender"), gender.trim()));
-        }
-        if (hasText(color)) {
-            spec = spec.and((root, query, cb) -> cb.equal(root.get("color"), color.trim()));
-        }
-        if (minPrice != null) {
-            spec = spec.and((root, query, cb) -> cb.greaterThanOrEqualTo(root.get("priceAmount"), java.math.BigDecimal.valueOf(minPrice)));
-        }
-        if (maxPrice != null) {
-            spec = spec.and((root, query, cb) -> cb.lessThanOrEqualTo(root.get("priceAmount"), java.math.BigDecimal.valueOf(maxPrice)));
-        }
-
-        Page<ProductSummaryResponse> pageResult = productRepository.findAll(spec, pageable).map(ProductSummaryResponse::from);
+        Pageable pageable = PageRequest.of(page, size);
+        Page<ProductSummaryResponse> pageResult = productRepository.search(
+                keyword,
+                category,
+                brand,
+                gender,
+                color,
+                minPrice,
+                maxPrice,
+                sortBy,
+                pageable
+        ).map(ProductSummaryResponse::from);
         return ProductPageResponse.from(pageResult);
     }
 
@@ -127,9 +104,5 @@ public class ProductService {
     private Product findProduct(Long productId) {
         return productRepository.findById(productId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Product not found"));
-    }
-
-    private boolean hasText(String value) {
-        return value != null && !value.trim().isEmpty();
     }
 }

@@ -361,7 +361,7 @@ export default function Home() {
               <select
                 value={String(Math.min(currentPage + 1, totalPages))}
                 onChange={(event) => setCurrentPage(Number(event.target.value) - 1)}
-                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900"
               >
                 {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
                   <option key={pageNumber} value={pageNumber}>
