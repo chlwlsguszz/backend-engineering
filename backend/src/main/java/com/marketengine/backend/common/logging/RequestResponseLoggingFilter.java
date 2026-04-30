@@ -51,7 +51,8 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
         String uri = request.getRequestURI();
         return uri.startsWith("/swagger-ui")
                 || uri.equals("/swagger-ui.html")
-                || uri.startsWith("/api-docs");
+                || uri.startsWith("/api-docs")
+                || uri.equals("/actuator/prometheus");
     }
 
     private String resolveRequestId(HttpServletRequest request) {

@@ -5,7 +5,12 @@
 WITH generated AS (
     SELECT
         gs,
-        CASE (gs % 20)
+        ((mod(hashtextextended('brand-' || gs::text, 0), 20) + 20) % 20)::int AS brand_idx,
+        ((mod(hashtextextended('gender-' || gs::text, 0), 3) + 3) % 3)::int AS gender_idx,
+        ((mod(hashtextextended('category-' || gs::text, 0), 6) + 6) % 6)::int AS category_idx,
+        ((mod(hashtextextended('color-' || gs::text, 0), 8) + 8) % 8)::int AS color_idx,
+        ((mod(hashtextextended('item-' || gs::text, 0), 5) + 5) % 5)::int AS item_variant_idx,
+        CASE ((mod(hashtextextended('brand-' || gs::text, 0), 20) + 20) % 20)::int
             WHEN 0 THEN 'Nike'
             WHEN 1 THEN 'Adidas'
             WHEN 2 THEN 'Puma'
@@ -27,12 +32,12 @@ WITH generated AS (
             WHEN 18 THEN 'Oakley'
             ELSE 'Carhartt'
         END AS brand,
-        CASE (gs % 3)
+        CASE ((mod(hashtextextended('gender-' || gs::text, 0), 3) + 3) % 3)::int
             WHEN 0 THEN 'MEN'
             WHEN 1 THEN 'WOMEN'
             ELSE 'UNISEX'
         END AS gender,
-        CASE (gs % 6)
+        CASE ((mod(hashtextextended('category-' || gs::text, 0), 6) + 6) % 6)::int
             WHEN 0 THEN 'TOP'
             WHEN 1 THEN 'BOTTOM'
             WHEN 2 THEN 'OUTER'
@@ -40,7 +45,7 @@ WITH generated AS (
             WHEN 4 THEN 'GLASSES'
             ELSE 'HAT'
         END AS category,
-        CASE (gs % 8)
+        CASE ((mod(hashtextextended('color-' || gs::text, 0), 8) + 8) % 8)::int
             WHEN 0 THEN 'BLACK'
             WHEN 1 THEN 'WHITE'
             WHEN 2 THEN 'NAVY'
@@ -69,7 +74,7 @@ SELECT
     g.brand || ' ' || g.gender || ' ' ||
     CASE g.category
         WHEN 'TOP' THEN
-            CASE (g.gs % 5)
+            CASE g.item_variant_idx
                 WHEN 0 THEN 'T-Shirt'
                 WHEN 1 THEN 'Long Sleeve'
                 WHEN 2 THEN 'Hoodie'
@@ -77,7 +82,7 @@ SELECT
                 ELSE 'Knit'
             END
         WHEN 'BOTTOM' THEN
-            CASE (g.gs % 5)
+            CASE g.item_variant_idx
                 WHEN 0 THEN 'Jeans'
                 WHEN 1 THEN 'Slacks'
                 WHEN 2 THEN 'Jogger Pants'
@@ -85,7 +90,7 @@ SELECT
                 ELSE 'Cargo Pants'
             END
         WHEN 'OUTER' THEN
-            CASE (g.gs % 5)
+            CASE g.item_variant_idx
                 WHEN 0 THEN 'Jacket'
                 WHEN 1 THEN 'Jumper'
                 WHEN 2 THEN 'Coat'
@@ -93,7 +98,7 @@ SELECT
                 ELSE 'Windbreaker'
             END
         WHEN 'SHOES' THEN
-            CASE (g.gs % 5)
+            CASE g.item_variant_idx
                 WHEN 0 THEN 'Sneakers'
                 WHEN 1 THEN 'Running Shoes'
                 WHEN 2 THEN 'Loafers'
@@ -101,7 +106,7 @@ SELECT
                 ELSE 'Sandals'
             END
         WHEN 'GLASSES' THEN
-            CASE (g.gs % 5)
+            CASE g.item_variant_idx
                 WHEN 0 THEN 'Round Glasses'
                 WHEN 1 THEN 'Square Glasses'
                 WHEN 2 THEN 'Sunglasses'
@@ -109,7 +114,7 @@ SELECT
                 ELSE 'Horn Rim'
             END
         ELSE
-            CASE (g.gs % 5)
+            CASE g.item_variant_idx
                 WHEN 0 THEN 'Baseball Cap'
                 WHEN 1 THEN 'Bucket Hat'
                 WHEN 2 THEN 'Beanie'
