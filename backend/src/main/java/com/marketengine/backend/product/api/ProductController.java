@@ -56,7 +56,7 @@ public class ProductController {
     ) {
         int normalizedPage = page == null ? 0 : Math.max(page, 0);
         int normalizedSize = size == null ? 12 : Math.min(Math.max(size, 1), 100);
-        String normalizedSort = sortBy == null ? "VIEW" : sortBy;
+        String normalizedSort = sortBy == null ? "LATEST" : sortBy;
         return ResponseEntity.ok(ApiResponse.ok(productService.list(
                 keyword,
                 category,

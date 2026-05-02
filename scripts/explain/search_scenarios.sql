@@ -1,11 +1,11 @@
 -- Product search EXPLAIN (ANALYZE, BUFFERS) scenarios — mirrors ProductRepositoryImpl + ProductController defaults:
--- default size 12, sort VIEW => created_at DESC, id DESC; POPULARITY => popularity_score DESC, id DESC.
+-- default size 12, sort LATEST => created_at DESC, id DESC; POPULARITY => popularity_score DESC, id DESC.
 -- Run: .\scripts\explain\run-explain.ps1 (Postgres up)
 
 \set ON_ERROR_STOP on
 
 \echo ''
-\echo '=== S1: list - no filters, default sort (VIEW / newest first), page 0 ==='
+\echo '=== S1: list - no filters, default sort (LATEST / newest first), page 0 ==='
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id
 FROM products

@@ -40,7 +40,7 @@ export default function Home() {
   const [searchInput, setSearchInput] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("ALL");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
-  const [sortBy, setSortBy] = useState<"VIEW" | "POPULARITY">("VIEW");
+  const [sortBy, setSortBy] = useState<"LATEST" | "POPULARITY">("LATEST");
   const [selectedBrand, setSelectedBrand] = useState("ALL");
   const [selectedGender, setSelectedGender] = useState("ALL");
   const [selectedColor, setSelectedColor] = useState("ALL");
@@ -267,12 +267,12 @@ export default function Home() {
               <select
                 value={sortBy}
                 onChange={(event) => {
-                  setSortBy(event.target.value as "VIEW" | "POPULARITY");
+                  setSortBy(event.target.value as "LATEST" | "POPULARITY");
                   setCurrentPage(0);
                 }}
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black"
               >
-                <option value="VIEW">조회순</option>
+                <option value="LATEST">최신순</option>
                 <option value="POPULARITY">인기순</option>
               </select>
               <select
