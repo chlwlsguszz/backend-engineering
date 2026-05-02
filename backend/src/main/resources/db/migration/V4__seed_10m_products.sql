@@ -1,4 +1,4 @@
--- Add 100,000 apparel products for meaningful search/load testing.
+-- Add 10,000,000 apparel products for meaningful search/load testing.
 -- Naming rule: brand + gender + category-specific item name + color
 -- Price rule: 10,000 ~ 400,000, step 100 (mid-price skew: 40,000 ~ 180,000)
 
@@ -55,7 +55,7 @@ WITH generated AS (
             WHEN 6 THEN 'BLUE'
             ELSE 'GREEN'
         END AS color
-    FROM generate_series(1, 100000) AS gs
+    FROM generate_series(1, 10000000) AS gs
 )
 INSERT INTO products (
     name,

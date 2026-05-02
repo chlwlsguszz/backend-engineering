@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 
 type Product = {
   id: number;
@@ -120,6 +120,10 @@ export default function Home() {
   async function fetchProducts() {
     setLoadingProducts(true);
     setResultMessage("");
+    const perf =
+      typeof performance !== "undefined"
+        ? { t0: performance.now(), tNetwork: 0, tJson: 0, n: 0 }
+        : null;
     try {
       const params = new URLSearchParams({
         page: String(currentPage),
@@ -135,7 +139,12 @@ export default function Home() {
       if (maxPrice.trim() !== "") params.set("maxPrice", maxPrice.trim());
 
       const response = await fetch(`/backend/api/products?${params.toString()}`);
+      if (perf) perf.tNetwork = performance.now();
       const body: ApiEnvelope<ProductPageResponse> = await response.json();
+      if (perf) {
+        perf.tJson = performance.now();
+        perf.n = body.success && body.data?.items ? body.data.items.length : 0;
+      }
       if (!response.ok || !body.success) {
         setResultMessage(body.error?.message ?? "상품 조회 실패");
         setProducts([]);
@@ -146,6 +155,13 @@ export default function Home() {
       setProducts(body.data.items);
       setTotalPages(Math.max(1, body.data.totalPages));
       setTotalElements(body.data.totalElements);
+      if (perf) {
+        const networkMs = (perf.tNetwork - perf.t0).toFixed(1);
+        const jsonMs = (perf.tJson - perf.tNetwork).toFixed(1);
+        console.info(
+          `[perf] API network ${networkMs}ms · JSON parse ${jsonMs}ms · items ${perf.n} (React paint logged after commit)`,
+        );
+      }
     } catch {
       setProducts([]);
       setTotalPages(1);
@@ -159,6 +175,14 @@ export default function Home() {
   useEffect(() => {
     void fetchProducts();
   }, [currentPage, keyword, selectedCategory, selectedBrand, selectedGender, selectedColor, minPrice, maxPrice, sortBy]);
+
+  useLayoutEffect(() => {
+    if (products.length === 0) return;
+    const start = performance.now();
+    requestAnimationFrame(() => {
+      console.info(`[perf] after list commit → rAF ${(performance.now() - start).toFixed(1)}ms (DOM+paint queue)`);
+    });
+  }, [products]);
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-white via-slate-50 to-white">
@@ -358,17 +382,9 @@ export default function Home() {
                 이전
               </button>
 
-              <select
-                value={String(Math.min(currentPage + 1, totalPages))}
-                onChange={(event) => setCurrentPage(Number(event.target.value) - 1)}
-                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900"
-              >
-                {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
-                  <option key={pageNumber} value={pageNumber}>
-                    {pageNumber} / {totalPages}
-                  </option>
-                ))}
-              </select>
+              <span className="min-w-[8rem] rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-center text-sm text-slate-900 tabular-nums">
+                {Math.min(currentPage + 1, totalPages)} / {totalPages}
+              </span>
 
               <button
                 type="button"
