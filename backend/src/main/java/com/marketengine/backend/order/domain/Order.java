@@ -17,9 +17,14 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 @Entity
 @Table(name = "orders")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Order {
 
     @Id
@@ -50,9 +55,6 @@ public class Order {
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private OffsetDateTime createdAt;
 
-    protected Order() {
-    }
-
     public Order(Member member, Product product, int quantity, BigDecimal unitPrice, OrderStatus status) {
         this.member = member;
         this.product = product;
@@ -60,38 +62,6 @@ public class Order {
         this.unitPrice = unitPrice;
         this.status = status;
         this.totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity));
-    }
-
-    public Long getId() {
-        return id;
-    }
-
-    public Member getMember() {
-        return member;
-    }
-
-    public Product getProduct() {
-        return product;
-    }
-
-    public int getQuantity() {
-        return quantity;
-    }
-
-    public BigDecimal getUnitPrice() {
-        return unitPrice;
-    }
-
-    public OrderStatus getStatus() {
-        return status;
-    }
-
-    public BigDecimal getTotalAmount() {
-        return totalAmount;
-    }
-
-    public OffsetDateTime getCreatedAt() {
-        return createdAt;
     }
 
     public void changeStatus(OrderStatus status) {

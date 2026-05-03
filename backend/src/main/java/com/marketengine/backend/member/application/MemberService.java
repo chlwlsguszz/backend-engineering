@@ -13,15 +13,14 @@ import com.marketengine.backend.member.api.MemberDtos.UpdateMemberRequest;
 import com.marketengine.backend.member.domain.Member;
 import com.marketengine.backend.member.domain.MemberRepository;
 
+import lombok.RequiredArgsConstructor;
+
 @Service
 @Transactional(readOnly = true)
+@RequiredArgsConstructor
 public class MemberService {
 
     private final MemberRepository memberRepository;
-
-    public MemberService(MemberRepository memberRepository) {
-        this.memberRepository = memberRepository;
-    }
 
     @Transactional
     public MemberResponse create(CreateMemberRequest request) {

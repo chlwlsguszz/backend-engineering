@@ -18,16 +18,14 @@ import com.marketengine.backend.member.api.MemberDtos.UpdateMemberRequest;
 import com.marketengine.backend.member.application.MemberService;
 
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 
 @RestController
 @RequestMapping("/api/members")
+@RequiredArgsConstructor
 public class MemberController {
 
     private final MemberService memberService;
-
-    public MemberController(MemberService memberService) {
-        this.memberService = memberService;
-    }
 
     @PostMapping
     public ApiResponse<MemberResponse> create(@Valid @RequestBody CreateMemberRequest request) {

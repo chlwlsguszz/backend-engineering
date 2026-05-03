@@ -18,23 +18,16 @@ import com.marketengine.backend.order.domain.OrderStatus;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductRepository;
 
+import lombok.RequiredArgsConstructor;
+
 @Service
 @Transactional(readOnly = true)
+@RequiredArgsConstructor
 public class OrderService {
 
     private final OrderRepository orderRepository;
     private final MemberRepository memberRepository;
     private final ProductRepository productRepository;
-
-    public OrderService(
-            OrderRepository orderRepository,
-            MemberRepository memberRepository,
-            ProductRepository productRepository
-    ) {
-        this.orderRepository = orderRepository;
-        this.memberRepository = memberRepository;
-        this.productRepository = productRepository;
-    }
 
     @Transactional
     public OrderResponse create(CreateOrderRequest request) {

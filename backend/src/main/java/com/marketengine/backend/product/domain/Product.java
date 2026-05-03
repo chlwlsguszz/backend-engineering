@@ -11,9 +11,14 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 @Entity
 @Table(name = "products")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Product {
 
     @Id
@@ -57,9 +62,6 @@ public class Product {
     @Column(name = "updated_at", nullable = false, insertable = false, updatable = false)
     private OffsetDateTime updatedAt;
 
-    protected Product() {
-    }
-
     public Product(
             String name,
             BigDecimal priceAmount,
@@ -82,58 +84,6 @@ public class Product {
         this.gender = gender;
         this.status = status;
         this.popularityScore = popularityScore;
-    }
-
-    public Long getId() {
-        return id;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public BigDecimal getPriceAmount() {
-        return priceAmount;
-    }
-
-    public int getStockQuantity() {
-        return stockQuantity;
-    }
-
-    public OffsetDateTime getCreatedAt() {
-        return createdAt;
-    }
-
-    public OffsetDateTime getUpdatedAt() {
-        return updatedAt;
-    }
-
-    public String getDescription() {
-        return description;
-    }
-
-    public ProductCategory getCategory() {
-        return category;
-    }
-
-    public String getBrand() {
-        return brand;
-    }
-
-    public String getColor() {
-        return color;
-    }
-
-    public String getGender() {
-        return gender;
-    }
-
-    public String getStatus() {
-        return status;
-    }
-
-    public int getPopularityScore() {
-        return popularityScore;
     }
 
     public void changeInfo(

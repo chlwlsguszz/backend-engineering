@@ -18,16 +18,14 @@ import com.marketengine.backend.order.api.OrderDtos.UpdateOrderRequest;
 import com.marketengine.backend.order.application.OrderService;
 
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 
 @RestController
 @RequestMapping("/api/orders")
+@RequiredArgsConstructor
 public class OrderController {
 
     private final OrderService orderService;
-
-    public OrderController(OrderService orderService) {
-        this.orderService = orderService;
-    }
 
     @PostMapping
     public ApiResponse<OrderResponse> create(@Valid @RequestBody CreateOrderRequest request) {

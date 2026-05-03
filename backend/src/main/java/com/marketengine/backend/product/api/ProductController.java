@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.marketengine.backend.common.response.ApiResponse;
+import lombok.RequiredArgsConstructor;
 import com.marketengine.backend.product.api.ProductDtos.CreateProductRequest;
 import com.marketengine.backend.product.api.ProductDtos.ProductDetailResponse;
 import com.marketengine.backend.product.api.ProductDtos.ProductPageResponse;
@@ -22,13 +23,10 @@ import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/api/products")
+@RequiredArgsConstructor
 public class ProductController {
 
     private final ProductService productService;
-
-    public ProductController(ProductService productService) {
-        this.productService = productService;
-    }
 
     @PostMapping
     public ApiResponse<ProductDetailResponse> create(@Valid @RequestBody CreateProductRequest request) {
