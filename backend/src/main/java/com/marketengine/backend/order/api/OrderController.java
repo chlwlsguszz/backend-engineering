@@ -2,7 +2,6 @@ package com.marketengine.backend.order.api;
 
 import java.util.List;
 
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,31 +30,31 @@ public class OrderController {
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse<OrderResponse>> create(@Valid @RequestBody CreateOrderRequest request) {
-        return ResponseEntity.ok(ApiResponse.ok(orderService.create(request)));
+    public ApiResponse<OrderResponse> create(@Valid @RequestBody CreateOrderRequest request) {
+        return ApiResponse.ok(orderService.create(request));
     }
 
     @GetMapping("/{orderId}")
-    public ResponseEntity<ApiResponse<OrderResponse>> get(@PathVariable Long orderId) {
-        return ResponseEntity.ok(ApiResponse.ok(orderService.get(orderId)));
+    public ApiResponse<OrderResponse> get(@PathVariable Long orderId) {
+        return ApiResponse.ok(orderService.get(orderId));
     }
 
     @GetMapping
-    public ResponseEntity<ApiResponse<List<OrderResponse>>> list() {
-        return ResponseEntity.ok(ApiResponse.ok(orderService.list()));
+    public ApiResponse<List<OrderResponse>> list() {
+        return ApiResponse.ok(orderService.list());
     }
 
     @PutMapping("/{orderId}")
-    public ResponseEntity<ApiResponse<OrderResponse>> update(
+    public ApiResponse<OrderResponse> update(
             @PathVariable Long orderId,
             @Valid @RequestBody UpdateOrderRequest request
     ) {
-        return ResponseEntity.ok(ApiResponse.ok(orderService.update(orderId, request)));
+        return ApiResponse.ok(orderService.update(orderId, request));
     }
 
     @DeleteMapping("/{orderId}")
-    public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long orderId) {
+    public ApiResponse<Void> delete(@PathVariable Long orderId) {
         orderService.delete(orderId);
-        return ResponseEntity.ok(ApiResponse.ok());
+        return ApiResponse.ok();
     }
 }

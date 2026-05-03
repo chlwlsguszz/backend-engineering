@@ -1,6 +1,5 @@
 package com.marketengine.backend.product.api;
 
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,17 +31,17 @@ public class ProductController {
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse<ProductDetailResponse>> create(@Valid @RequestBody CreateProductRequest request) {
-        return ResponseEntity.ok(ApiResponse.ok(productService.create(request)));
+    public ApiResponse<ProductDetailResponse> create(@Valid @RequestBody CreateProductRequest request) {
+        return ApiResponse.ok(productService.create(request));
     }
 
     @GetMapping("/{productId}")
-    public ResponseEntity<ApiResponse<ProductDetailResponse>> get(@PathVariable Long productId) {
-        return ResponseEntity.ok(ApiResponse.ok(productService.get(productId)));
+    public ApiResponse<ProductDetailResponse> get(@PathVariable Long productId) {
+        return ApiResponse.ok(productService.get(productId));
     }
 
     @GetMapping
-    public ResponseEntity<ApiResponse<ProductPageResponse>> list(
+    public ApiResponse<ProductPageResponse> list(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) ProductCategory category,
             @RequestParam(required = false) String brand,
@@ -57,7 +56,7 @@ public class ProductController {
         int normalizedPage = page == null ? 0 : Math.max(page, 0);
         int normalizedSize = size == null ? 12 : Math.min(Math.max(size, 1), 100);
         String normalizedSort = sortBy == null ? "LATEST" : sortBy;
-        return ResponseEntity.ok(ApiResponse.ok(productService.list(
+        return ApiResponse.ok(productService.list(
                 keyword,
                 category,
                 brand,
@@ -68,20 +67,20 @@ public class ProductController {
                 normalizedSort,
                 normalizedPage,
                 normalizedSize
-        )));
+        ));
     }
 
     @PutMapping("/{productId}")
-    public ResponseEntity<ApiResponse<ProductDetailResponse>> update(
+    public ApiResponse<ProductDetailResponse> update(
             @PathVariable Long productId,
             @Valid @RequestBody UpdateProductRequest request
     ) {
-        return ResponseEntity.ok(ApiResponse.ok(productService.update(productId, request)));
+        return ApiResponse.ok(productService.update(productId, request));
     }
 
     @DeleteMapping("/{productId}")
-    public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long productId) {
+    public ApiResponse<Void> delete(@PathVariable Long productId) {
         productService.delete(productId);
-        return ResponseEntity.ok(ApiResponse.ok());
+        return ApiResponse.ok();
     }
 }
