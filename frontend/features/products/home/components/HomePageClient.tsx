@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect } from "react";
+
 import { ProductGrid } from "./ProductGrid";
 import { ProductPagination } from "./ProductPagination";
 import { ProductToolbar } from "./ProductToolbar";
@@ -21,7 +23,28 @@ export function HomePageClient() {
     patchFilters,
     applyKeywordSearch,
     loadMore,
+    lastFetchMetricRef,
   } = useProductList();
+
+  useEffect(() => {
+    const metric = lastFetchMetricRef.current;
+    if (!metric) {
+      return;
+    }
+
+    const afterCommitAt = performance.now();
+    requestAnimationFrame(() => {
+      const afterPaintAt = performance.now();
+      const networkAndJsonMs = metric.responseAt - metric.startedAt;
+      const reactCommitMs = afterCommitAt - metric.responseAt;
+      const paintQueueMs = afterPaintAt - afterCommitAt;
+      const totalMs = afterPaintAt - metric.startedAt;
+      console.info(
+        `[perf][products:${metric.mode}] page=${metric.page} items=${metric.itemCount} total=${totalMs.toFixed(1)}ms (net+json=${networkAndJsonMs.toFixed(1)}ms, react=${reactCommitMs.toFixed(1)}ms, paint=${paintQueueMs.toFixed(1)}ms)`,
+      );
+    });
+    lastFetchMetricRef.current = null;
+  }, [products, lastFetchMetricRef]);
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-white via-slate-50 to-white">

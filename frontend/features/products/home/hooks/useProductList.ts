@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchProductPage } from "../../shared/api";
 import { PAGE_SIZE } from "../../shared/constants";
@@ -24,6 +24,13 @@ export function useProductList() {
   const [hasNext, setHasNext] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [resultMessage, setResultMessage] = useState("");
+  const lastFetchMetricRef = useRef<{
+    mode: "initial" | "loadMore";
+    startedAt: number;
+    responseAt: number;
+    itemCount: number;
+    page: number;
+  } | null>(null);
 
   const hasProducts = useMemo(() => products.length > 0, [products]);
 
@@ -31,8 +38,11 @@ export function useProductList() {
     async function load() {
       setLoadingProducts(true);
       setResultMessage("");
+      const startedAt = performance.now();
+      const mode = currentPage === 0 ? "initial" : "loadMore";
 
       const result = await fetchProductPage(currentPage, filters);
+      const responseAt = performance.now();
 
       if (!result.data) {
         if (currentPage === 0) {
@@ -44,6 +54,13 @@ export function useProductList() {
         return;
       }
       const data = result.data;
+      lastFetchMetricRef.current = {
+        mode,
+        startedAt,
+        responseAt,
+        itemCount: data.items.length,
+        page: currentPage,
+      };
 
       if (currentPage === 0) {
         setProducts(data.items);
@@ -91,5 +108,6 @@ export function useProductList() {
     patchFilters,
     applyKeywordSearch,
     loadMore,
+    lastFetchMetricRef,
   };
 }
