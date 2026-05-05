@@ -1,8 +1,8 @@
 package com.marketengine.backend.product.application;
 
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -62,7 +62,7 @@ public class ProductService {
             int size
     ) {
         Pageable pageable = PageRequest.of(page, size);
-        Page<ProductSummaryResponse> pageResult = productRepository.search(
+        Slice<ProductSummaryResponse> pageResult = productRepository.search(
                 keyword,
                 category,
                 brand,

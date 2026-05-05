@@ -21,8 +21,7 @@ export function useProductList() {
   const [searchInput, setSearchInput] = useState("");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalElements, setTotalElements] = useState(0);
+  const [hasNext, setHasNext] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [resultMessage, setResultMessage] = useState("");
 
@@ -36,17 +35,22 @@ export function useProductList() {
       const result = await fetchProductPage(currentPage, filters);
 
       if (!result.data) {
-        setProducts([]);
-        setTotalPages(1);
-        setTotalElements(0);
+        if (currentPage === 0) {
+          setProducts([]);
+          setHasNext(false);
+        }
         setResultMessage(result.errorMessage);
         setLoadingProducts(false);
         return;
       }
+      const data = result.data;
 
-      setProducts(result.data.items);
-      setTotalPages(Math.max(1, result.data.totalPages));
-      setTotalElements(result.data.totalElements);
+      if (currentPage === 0) {
+        setProducts(data.items);
+      } else {
+        setProducts((prev) => [...prev, ...data.items]);
+      }
+      setHasNext(data.hasNext);
       setLoadingProducts(false);
     }
 
@@ -63,22 +67,29 @@ export function useProductList() {
     setCurrentPage(0);
   }
 
+  function loadMore() {
+    if (loadingProducts || !hasNext) {
+      return;
+    }
+    setCurrentPage((prev) => prev + 1);
+  }
+
   return {
     products,
     filters,
     searchInput,
     isFilterOpen,
-    currentPage,
-    totalPages,
-    totalElements,
+    hasNext,
     loadingProducts,
+    loadingInitial: loadingProducts && currentPage === 0,
+    loadingMore: loadingProducts && currentPage > 0,
     resultMessage,
     hasProducts,
     pageSize: PAGE_SIZE,
     setSearchInput,
     setIsFilterOpen,
-    setCurrentPage,
     patchFilters,
     applyKeywordSearch,
+    loadMore,
   };
 }

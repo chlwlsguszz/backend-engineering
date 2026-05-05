@@ -34,8 +34,6 @@ export type ProductPageResponse = {
   items: Product[];
   page: number;
   size: number;
-  totalElements: number;
-  totalPages: number;
   hasNext: boolean;
 };
 

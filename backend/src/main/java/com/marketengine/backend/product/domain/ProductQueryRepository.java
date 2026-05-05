@@ -1,11 +1,11 @@
 package com.marketengine.backend.product.domain;
 
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 
 public interface ProductQueryRepository {
 
-    Page<Product> search(
+    Slice<Product> search(
             String keyword,
             ProductCategory category,
             String brand,

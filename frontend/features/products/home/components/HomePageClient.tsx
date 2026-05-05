@@ -11,17 +11,16 @@ export function HomePageClient() {
     filters,
     searchInput,
     isFilterOpen,
-    currentPage,
-    totalPages,
-    totalElements,
-    loadingProducts,
+    hasNext,
+    loadingInitial,
+    loadingMore,
     resultMessage,
     pageSize,
     setSearchInput,
     setIsFilterOpen,
-    setCurrentPage,
     patchFilters,
     applyKeywordSearch,
+    loadMore,
   } = useProductList();
 
   return (
@@ -35,7 +34,7 @@ export function HomePageClient() {
           filters={filters}
           searchInput={searchInput}
           isFilterOpen={isFilterOpen}
-          loadingProducts={loadingProducts}
+          loadingProducts={loadingInitial}
           setSearchInput={setSearchInput}
           setIsFilterOpen={setIsFilterOpen}
           patchFilters={patchFilters}
@@ -47,11 +46,11 @@ export function HomePageClient() {
         </section>
 
         <ProductPagination
-          currentPage={currentPage}
-          totalPages={totalPages}
-          totalElements={totalElements}
+          hasNext={hasNext}
+          loadingMore={loadingMore}
+          loadedCount={products.length}
           pageSize={pageSize}
-          setCurrentPage={setCurrentPage}
+          loadMore={loadMore}
         />
 
         {resultMessage && (

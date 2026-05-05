@@ -3,9 +3,9 @@ package com.marketengine.backend.product.domain;
 import java.math.BigDecimal;
 import java.util.List;
 
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
+import org.springframework.data.domain.SliceImpl;
 
 import com.querydsl.core.types.Order;
 import com.querydsl.core.types.OrderSpecifier;
@@ -23,7 +23,7 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
     }
 
     @Override
-    public Page<Product> search(
+    public Slice<Product> search(
             String keyword,
             ProductCategory category,
             String brand,
@@ -36,7 +36,7 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
     ) {
         QProduct product = QProduct.product;
 
-        List<Product> content = queryFactory
+        List<Product> rows = queryFactory
                 .selectFrom(product)
                 .where(
                         keywordContains(keyword),
@@ -49,24 +49,15 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
                 )
                 .orderBy(orderSpecifiers(sortBy))
                 .offset(pageable.getOffset())
-                .limit(pageable.getPageSize())
+                .limit(pageable.getPageSize() + 1L)
                 .fetch();
 
-        Long total = queryFactory
-                .select(product.count())
-                .from(product)
-                .where(
-                        keywordContains(keyword),
-                        categoryEq(category),
-                        brandEq(brand),
-                        genderEq(gender),
-                        colorEq(color),
-                        minPriceGoe(minPrice),
-                        maxPriceLoe(maxPrice)
-                )
-                .fetchOne();
+        boolean hasNext = rows.size() > pageable.getPageSize();
+        if (hasNext) {
+            rows.remove(rows.size() - 1);
+        }
 
-        return new PageImpl<>(content, pageable, total == null ? 0L : total);
+        return new SliceImpl<>(rows, pageable, hasNext);
     }
 
     private OrderSpecifier<?>[] orderSpecifiers(String sortBy) {
