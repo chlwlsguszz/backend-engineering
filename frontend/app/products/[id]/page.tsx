@@ -4,44 +4,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
+import { createOrder, fetchProductDetail } from "@/features/products/shared/api";
+import type { ProductDetail } from "@/features/products/shared/types";
 
-type ProductCategory = "TOP" | "BOTTOM" | "OUTER" | "SHOES" | "GLASSES" | "HAT";
-
-type ProductDetail = {
-  id: number;
-  name: string;
-  priceAmount: number;
-  stockQuantity: number;
-  description: string;
-  category: ProductCategory;
-  brand: string;
-  color: string;
-  gender: string;
-  status: string;
-  popularityScore: number;
-  createdAt: string;
-  updatedAt: string;
-};
-
-type ApiEnvelope<T> = {
-  success: boolean;
-  data: T;
-  error?: {
-    code: string;
-    message: string;
-  };
-};
-
-type OrderResponse = {
-  id: number;
-  memberId: number;
-  productId: number;
-  quantity: number;
-  unitPrice: number;
-  status: string;
-  totalAmount: number;
-  createdAt: string;
-};
+type ProductCategory = ProductDetail["category"];
 
 export default function ProductDetailPage() {
   const params = useParams<{ id: string }>();
@@ -70,21 +36,15 @@ export default function ProductDetailPage() {
     async function fetchDetail() {
       setLoading(true);
       setMessage("");
-      try {
-        const response = await fetch(`/backend/api/products/${productId}`);
-        const body: ApiEnvelope<ProductDetail> = await response.json();
-        if (!response.ok || !body.success) {
-          setMessage(body.error?.message ?? "상품 상세 조회 실패");
-          setProduct(null);
-          return;
-        }
-        setProduct(body.data);
-      } catch {
-        setMessage("백엔드 연결 실패: 서버가 실행 중인지 확인하세요.");
+      const result = await fetchProductDetail(productId);
+      if (!result.data) {
+        setMessage(result.errorMessage || "상품 상세 조회 실패");
         setProduct(null);
-      } finally {
         setLoading(false);
+        return;
       }
+      setProduct(result.data);
+      setLoading(false);
     }
 
     if (productId) {
@@ -99,25 +59,16 @@ export default function ProductDetailPage() {
     setOrdering(true);
     setOrderMessage("");
     try {
-      const response = await fetch("/backend/api/orders", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          memberId: 1,
-          productId: product.id,
-          quantity: orderQuantity,
-        }),
+      const result = await createOrder({
+        memberId: 1,
+        productId: product.id,
+        quantity: orderQuantity,
       });
-      const body: ApiEnvelope<OrderResponse> = await response.json();
-      if (!response.ok || !body.success) {
-        setOrderMessage(body.error?.message ?? "주문 실패");
-        return;
+      if (!result.data) {
+        setOrderMessage(result.errorMessage || "주문 실패");
+      } else {
+        setOrderMessage(`주문 완료! 주문번호: ${result.data.id}`);
       }
-      setOrderMessage(`주문 완료! 주문번호: ${body.data.id}`);
-    } catch {
-      setOrderMessage("주문 실패: 백엔드 연결을 확인하세요.");
     } finally {
       setOrdering(false);
     }

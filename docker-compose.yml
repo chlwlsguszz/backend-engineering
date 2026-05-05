@@ -40,7 +40,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "3000:3000"
+      - "5173:5173"
 
   prometheus:
     image: prom/prometheus:v3.6.0
@@ -65,7 +65,7 @@ services:
     depends_on:
       - prometheus
     ports:
-      - "3005:3000"
+      - "5305:3000"
 
 volumes:
   marketengine-pgdata:
