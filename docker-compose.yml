@@ -46,6 +46,10 @@ services:
     image: prom/prometheus:v3.6.0
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
+      # k6 등에서 remote write로 시계열을 받을 때 필요 (기본값 false)
+      - "--web.enable-remote-write-receiver"
+      # k6 K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM=true 일 때 Trend → native histogram 수신
+      - "--enable-feature=native-histograms"
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     depends_on:
