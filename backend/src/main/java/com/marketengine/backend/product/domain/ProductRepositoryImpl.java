@@ -2,6 +2,7 @@ package com.marketengine.backend.product.domain;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Locale;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
@@ -10,11 +11,17 @@ import org.springframework.data.domain.SliceImpl;
 import com.querydsl.core.types.Order;
 import com.querydsl.core.types.OrderSpecifier;
 import com.querydsl.core.types.dsl.BooleanExpression;
+import com.querydsl.core.types.dsl.Expressions;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 
 import jakarta.persistence.EntityManager;
 
 public class ProductRepositoryImpl implements ProductQueryRepository {
+
+    private static final int KEYWORD_MIN_LENGTH = 2;
+
+    /** pg_trgm word_similarity; typo tolerance (e.g. Nikke → Nike). Requires PostgreSQL + pg_trgm. */
+    private static final double WORD_SIMILARITY_THRESHOLD = 0.35;
 
     private final JPAQueryFactory queryFactory;
 
@@ -78,9 +85,26 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
         if (!hasText(keyword)) {
             return null;
         }
-        QProduct product = QProduct.product;
-        return product.name.containsIgnoreCase(keyword.trim())
-                .or(product.brand.containsIgnoreCase(keyword.trim()));
+        String[] tokens = keyword.trim().toLowerCase(Locale.ROOT).split("\\s+");
+        BooleanExpression combined = null;
+        for (String token : tokens) {
+            if (token.length() < KEYWORD_MIN_LENGTH) {
+                continue;
+            }
+            BooleanExpression tokenMatch = keywordTokenMatch(token);
+            combined = combined == null ? tokenMatch : combined.and(tokenMatch);
+        }
+        return combined;
+    }
+
+    private BooleanExpression keywordTokenMatch(String token) {
+        return Expressions.booleanTemplate(
+                "(lower({0}) like {1} or word_similarity({2}, lower({0})) > {3})",
+                QProduct.product.name,
+                "%" + token + "%",
+                token,
+                WORD_SIMILARITY_THRESHOLD
+        );
     }
 
     private BooleanExpression categoryEq(ProductCategory category) {

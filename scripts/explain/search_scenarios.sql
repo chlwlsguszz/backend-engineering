@@ -1,6 +1,7 @@
 -- Product search EXPLAIN (ANALYZE, BUFFERS) scenarios — mirrors ProductRepositoryImpl + ProductController defaults:
 -- default size 12, sort LATEST => created_at DESC, id DESC; POPULARITY => popularity_score DESC, id DESC.
 -- Run: .\scripts\explain\run-explain.ps1 (Postgres up)
+-- Edge (4: typo, multi-word keyword, 2× deep page): .\scripts\explain\run-explain-edge.ps1
 
 \set ON_ERROR_STOP on
 
@@ -24,11 +25,12 @@ OFFSET 0
 LIMIT 12;
 
 \echo ''
-\echo '=== S3: list - keyword (name OR brand ILIKE), Hibernate containsIgnoreCase pattern ==='
+\echo '=== S3: list - keyword (LIKE OR word_similarity per token), matches keywordContains ==='
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id
 FROM products
-WHERE name ILIKE '%Nike%' OR brand ILIKE '%Nike%'
+WHERE lower(name) LIKE '%nike%'
+   OR word_similarity('nike', lower(name)) > 0.35
 ORDER BY created_at DESC, id DESC
 OFFSET 0
 LIMIT 12;
