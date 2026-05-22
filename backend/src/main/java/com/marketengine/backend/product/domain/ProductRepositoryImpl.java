@@ -20,9 +20,6 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
 
     private static final int KEYWORD_MIN_LENGTH = 2;
 
-    /** pg_trgm word_similarity; typo tolerance (e.g. Nikke → Nike). Requires PostgreSQL + pg_trgm. */
-    private static final double WORD_SIMILARITY_THRESHOLD = 0.35;
-
     private final JPAQueryFactory queryFactory;
 
     public ProductRepositoryImpl(EntityManager entityManager) {
@@ -99,11 +96,9 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
 
     private BooleanExpression keywordTokenMatch(String token) {
         return Expressions.booleanTemplate(
-                "(lower({0}) like {1} or word_similarity({2}, lower({0})) > {3})",
+                "lower({0}) like {1}",
                 QProduct.product.name,
-                "%" + token + "%",
-                token,
-                WORD_SIMILARITY_THRESHOLD
+                "%" + token + "%"
         );
     }
 

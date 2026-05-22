@@ -8,8 +8,6 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/marketengine}
     username: ${SPRING_DATASOURCE_USERNAME:marketengine}
     password: ${SPRING_DATASOURCE_PASSWORD:marketengine}
-    hikari:
-      maximum-pool-size: 30
 
   jpa:
     open-in-view: false
