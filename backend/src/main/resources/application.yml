@@ -20,6 +20,17 @@ spring:
   mvc:
     throw-exception-if-no-handler-found: true
 
+  elasticsearch:
+    uris: ${SPRING_ELASTICSEARCH_URIS:http://localhost:9200}
+
+marketengine:
+  elasticsearch:
+    # Step 1: log cluster info at startup.
+    verify-on-startup: true
+    index:
+      # Step 2: create products index + mapping if missing (tests disable this).
+      ensure-on-startup: true
+
 springdoc:
   api-docs:
     path: /api-docs
@@ -33,3 +44,7 @@ management:
     web:
       exposure:
         include: health,info,prometheus
+  health:
+    elasticsearch:
+      # Step 1: ES is not required for API yet; avoid marking the app unhealthy when ES is down.
+      enabled: false

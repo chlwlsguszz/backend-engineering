@@ -1,0 +1,6 @@
+# Unit/integration tests do not require a running Elasticsearch cluster.
+marketengine:
+  elasticsearch:
+    verify-on-startup: false
+    index:
+      ensure-on-startup: false

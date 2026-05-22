@@ -15,6 +15,22 @@ services:
     volumes:
       - marketengine-pgdata:/var/lib/postgresql/data
 
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - marketengine-esdata:/usr/share/elasticsearch/data
+
   backend:
     build:
       context: ./backend
@@ -23,8 +39,11 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/marketengine
       SPRING_DATASOURCE_USERNAME: marketengine
       SPRING_DATASOURCE_PASSWORD: marketengine
+      SPRING_ELASTICSEARCH_URIS: http://elasticsearch:9200
     depends_on:
       postgres:
+        condition: service_healthy
+      elasticsearch:
         condition: service_healthy
     ports:
       - "8080:8080"
@@ -73,4 +92,5 @@ services:
 
 volumes:
   marketengine-pgdata:
+  marketengine-esdata:
   grafana-data:
