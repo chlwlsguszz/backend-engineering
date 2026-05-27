@@ -16,6 +16,7 @@ import com.marketengine.backend.product.api.ProductDtos.UpdateProductRequest;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductCategory;
 import com.marketengine.backend.product.domain.ProductRepository;
+import com.marketengine.backend.product.infrastructure.search.ProductSearchIndexer;
 
 import lombok.RequiredArgsConstructor;
 
@@ -25,10 +26,12 @@ import lombok.RequiredArgsConstructor;
 public class ProductService {
 
     private final ProductRepository productRepository;
+    private final ProductListSearcher productListSearcher;
+    private final ProductSearchIndexer productSearchIndexer;
 
     @Transactional
     public ProductDetailResponse create(CreateProductRequest request) {
-        Product saved = productRepository.save(
+        Product saved = productRepository.saveAndFlush(
                 new Product(
                         request.name(),
                         request.priceAmount(),
@@ -42,6 +45,7 @@ public class ProductService {
                         request.popularityScore()
                 )
         );
+        productSearchIndexer.index(saved);
         return ProductDetailResponse.from(saved);
     }
 
@@ -62,7 +66,7 @@ public class ProductService {
             int size
     ) {
         Pageable pageable = PageRequest.of(page, size);
-        Slice<ProductSummaryResponse> pageResult = productRepository.search(
+        Slice<ProductSummaryResponse> pageResult = productListSearcher.search(
                 keyword,
                 category,
                 brand,
@@ -72,7 +76,7 @@ public class ProductService {
                 maxPrice,
                 sortBy,
                 pageable
-        ).map(ProductSummaryResponse::from);
+        );
         return ProductPageResponse.from(pageResult);
     }
 
@@ -91,6 +95,8 @@ public class ProductService {
                 request.status(),
                 request.popularityScore()
         );
+        productRepository.flush();
+        productSearchIndexer.index(product);
         return ProductDetailResponse.from(product);
     }
 
@@ -98,6 +104,8 @@ public class ProductService {
     public void delete(Long productId) {
         Product product = findProduct(productId);
         productRepository.delete(product);
+        productRepository.flush();
+        productSearchIndexer.delete(productId);
     }
 
     private Product findProduct(Long productId) {

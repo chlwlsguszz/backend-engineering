@@ -1,0 +1,10 @@
+# Bulk reindex profile: no HTTP server, run once and exit.
+spring:
+  main:
+    web-application-type: none
+
+marketengine:
+  elasticsearch:
+    reindex:
+      batch-size: 5000
+      log-every-batches: 20

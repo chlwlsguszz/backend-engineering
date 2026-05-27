@@ -73,6 +73,7 @@ public final class ProductDtos {
                     product.getCreatedAt()
             );
         }
+
     }
 
     public record ProductDetailResponse(

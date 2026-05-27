@@ -23,12 +23,16 @@ import com.marketengine.backend.product.api.ProductDtos.UpdateProductRequest;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductCategory;
 import com.marketengine.backend.product.domain.ProductRepository;
+import com.marketengine.backend.product.infrastructure.search.ProductSearchIndexer;
 
 @ExtendWith(MockitoExtension.class)
 class ProductServiceTest {
 
     @Mock
     private ProductRepository productRepository;
+
+    @Mock
+    private ProductSearchIndexer productSearchIndexer;
 
     @InjectMocks
     private ProductService productService;
@@ -48,14 +52,15 @@ class ProductServiceTest {
                 800
         );
 
-        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(productRepository.saveAndFlush(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         ProductDetailResponse response = productService.create(request);
 
         assertThat(response.name()).isEqualTo("keyboard");
         assertThat(response.priceAmount()).isEqualByComparingTo("120.00");
         assertThat(response.stockQuantity()).isEqualTo(10);
-        verify(productRepository).save(any(Product.class));
+        verify(productRepository).saveAndFlush(any(Product.class));
+        verify(productSearchIndexer).index(any(Product.class));
     }
 
     @Test
@@ -104,5 +109,7 @@ class ProductServiceTest {
         assertThat(response.stockQuantity()).isEqualTo(2);
         assertThat(response.category()).isEqualTo(ProductCategory.OUTER);
         assertThat(response.popularityScore()).isEqualTo(500);
+        verify(productRepository).flush();
+        verify(productSearchIndexer).index(product);
     }
 }

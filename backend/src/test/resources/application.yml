@@ -1,5 +1,7 @@
 # Unit/integration tests do not require a running Elasticsearch cluster.
 marketengine:
+  search:
+    backend: postgres
   elasticsearch:
     verify-on-startup: false
     index:

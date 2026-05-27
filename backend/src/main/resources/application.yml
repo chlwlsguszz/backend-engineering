@@ -24,12 +24,19 @@ spring:
     uris: ${SPRING_ELASTICSEARCH_URIS:http://localhost:9200}
 
 marketengine:
+  search:
+    # Step 5: product list API — elasticsearch (default) or postgres (QueryDSL fallback).
+    backend: elasticsearch
   elasticsearch:
     # Step 1: log cluster info at startup.
     verify-on-startup: true
     index:
       # Step 2: create products index + mapping if missing (tests disable this).
       ensure-on-startup: true
+    reindex:
+      # Step 3: used by profile "reindex" (scripts/elasticsearch/run-reindex-products.ps1).
+      batch-size: 5000
+      log-every-batches: 20
 
 springdoc:
   api-docs:
