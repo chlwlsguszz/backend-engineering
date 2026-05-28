@@ -15,7 +15,7 @@ import { check, sleep } from "k6";
  */
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:8080";
-const SLOW_MS = Number(__ENV.SLOW_MS || 1000);
+const SLOW_MS = Number(__ENV.SLOW_MS || 100);
 const LOG_SLOW = __ENV.LOG_SLOW !== "0";
 const SIZE = Number(__ENV.SIZE || 12);
 const RAMP_UP = __ENV.RAMP_UP || "30s";

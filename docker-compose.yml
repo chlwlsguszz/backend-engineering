@@ -31,6 +31,16 @@ services:
     volumes:
       - marketengine-esdata:/usr/share/elasticsearch/data
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     build:
       context: ./backend
@@ -40,10 +50,14 @@ services:
       SPRING_DATASOURCE_USERNAME: marketengine
       SPRING_DATASOURCE_PASSWORD: marketengine
       SPRING_ELASTICSEARCH_URIS: http://elasticsearch:9200
+      SPRING_DATA_REDIS_HOST: redis
+      MARKETENGINE_CACHE_REDIS_ENABLED: "true"
     depends_on:
       postgres:
         condition: service_healthy
       elasticsearch:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     ports:
       - "8080:8080"

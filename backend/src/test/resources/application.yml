@@ -1,7 +1,16 @@
-# Unit/integration tests do not require a running Elasticsearch cluster.
+# Unit/integration tests do not require Elasticsearch or Redis.
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+
 marketengine:
   search:
     backend: postgres
+  cache:
+    redis:
+      enabled: false
   elasticsearch:
     verify-on-startup: false
     index:

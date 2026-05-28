@@ -56,6 +56,7 @@ public class ElasticsearchProductListSearcher implements ProductListSearcher {
                 .withQuery(buildQuery(keyword, category, brand, gender, color, minPrice, maxPrice))
                 .withSort(buildSort(sortBy))
                 .withPageable(fetchPageable)
+                .withTrackTotalHits(false)
                 .build();
 
         SearchHits<ProductDocument> hits = elasticsearchOperations.search(query, ProductDocument.class);

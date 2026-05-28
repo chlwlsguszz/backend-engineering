@@ -23,7 +23,20 @@ spring:
   elasticsearch:
     uris: ${SPRING_ELASTICSEARCH_URIS:http://localhost:9200}
 
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+
+  cache:
+    type: redis
+
 marketengine:
+  cache:
+    redis:
+      # Step 1: Redis + Spring Cache wiring (product list @Cacheable in a later step).
+      enabled: true
+      product-list-feed-ttl: 1800s
   search:
     # Step 5: product list API — elasticsearch (default) or postgres (QueryDSL fallback).
     backend: elasticsearch

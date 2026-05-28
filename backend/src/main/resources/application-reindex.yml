@@ -2,8 +2,15 @@
 spring:
   main:
     web-application-type: none
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
 
 marketengine:
+  cache:
+    redis:
+      enabled: false
   elasticsearch:
     reindex:
       batch-size: 5000
