@@ -4,6 +4,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.cache.annotation.CacheEvict;
 
@@ -23,7 +24,6 @@ import com.marketengine.backend.product.infrastructure.search.ProductSearchIndex
 import lombok.RequiredArgsConstructor;
 
 @Service
-@Transactional(readOnly = true)
 @RequiredArgsConstructor
 public class ProductService {
 
@@ -53,10 +53,12 @@ public class ProductService {
         return ProductDetailResponse.from(saved);
     }
 
+    @Transactional(readOnly = true)
     public ProductDetailResponse get(Long productId) {
         return ProductDetailResponse.from(findProduct(productId));
     }
 
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public ProductPageResponse list(
             String keyword,
             ProductCategory category,
@@ -70,7 +72,9 @@ public class ProductService {
             int size
     ) {
         if (isCacheableFeedRequest(keyword, category, brand, gender, color, minPrice, maxPrice, sortBy, page, size)) {
-            return productListFeedCache.get(keyword, category, minPrice, maxPrice, sortBy, page, size);
+            return productListFeedCache.get(
+                    keyword, category, brand, gender, color, minPrice, maxPrice, sortBy, page, size
+            );
         }
         Pageable pageable = PageRequest.of(page, size);
         Slice<ProductSummaryResponse> pageResult = productListSearcher.search(
@@ -117,6 +121,9 @@ public class ProductService {
         productSearchIndexer.delete(productId);
     }
 
+    private static final int FEED_PAGE_SIZE = 12;
+    private static final int MAX_CACHED_PAGE = 2;
+
     private boolean isCacheableFeedRequest(
             String keyword,
             ProductCategory category,
@@ -129,52 +136,79 @@ public class ProductService {
             int page,
             int size
     ) {
-        if (page != 0 || size != 12) {
+        if (size != FEED_PAGE_SIZE || page < 0 || page > MAX_CACHED_PAGE) {
             return false;
         }
         if (!("LATEST".equals(sortBy) || "POPULARITY".equals(sortBy))) {
             return false;
         }
-        if (brand != null || gender != null || color != null) {
-            return false;
-        }
 
-        // Aggressive but bounded: cache common top-page patterns used by k6.
-        // - no filters
-        // - category only
-        // - keyword only
-        // - price band only
-        // - keyword + price band
-        // - keyword + category
-        boolean hasKeyword = keyword != null;
+        boolean hasKeyword = hasText(keyword);
         boolean hasCategory = category != null;
+        boolean hasBrand = hasText(brand);
+        boolean hasGender = hasText(gender);
+        boolean hasColor = hasText(color);
         boolean hasPriceBand = minPrice != null || maxPrice != null;
 
+        if (!hasBrand && !hasGender && !hasColor) {
+            return matchesCacheableFeedWithoutFacetFilters(
+                    hasKeyword, hasCategory, hasPriceBand
+            );
+        }
+
+        return matchesCacheableFeedWithFacetFilters(
+                hasKeyword, hasCategory, hasBrand, hasGender, hasColor, hasPriceBand
+        );
+    }
+
+    private static boolean matchesCacheableFeedWithoutFacetFilters(
+            boolean hasKeyword,
+            boolean hasCategory,
+            boolean hasPriceBand
+    ) {
         if (!hasKeyword && !hasCategory && !hasPriceBand) {
             return true;
         }
-
         if (hasCategory && !hasKeyword && !hasPriceBand) {
             return true;
         }
-
         if (hasKeyword && !hasCategory && !hasPriceBand) {
             return true;
         }
-
         if (!hasKeyword && !hasCategory && hasPriceBand) {
             return true;
         }
-
         if (hasKeyword && !hasCategory && hasPriceBand) {
             return true;
         }
+        return hasKeyword && hasCategory && !hasPriceBand;
+    }
 
-        if (hasKeyword && hasCategory && !hasPriceBand) {
+    private static boolean matchesCacheableFeedWithFacetFilters(
+            boolean hasKeyword,
+            boolean hasCategory,
+            boolean hasBrand,
+            boolean hasGender,
+            boolean hasColor,
+            boolean hasPriceBand
+    ) {
+        if (hasCategory && hasBrand && !hasKeyword && !hasPriceBand && !hasGender && !hasColor) {
             return true;
         }
+        if (hasCategory && hasGender && hasColor && !hasKeyword && !hasBrand && !hasPriceBand) {
+            return true;
+        }
+        if (hasBrand && hasGender && !hasCategory && !hasKeyword && !hasPriceBand && !hasColor) {
+            return true;
+        }
+        if (hasCategory && hasBrand && hasGender && hasColor && hasPriceBand && !hasKeyword) {
+            return true;
+        }
+        return hasKeyword && hasCategory && hasBrand && hasGender && hasColor && hasPriceBand;
+    }
 
-        return false;
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private Product findProduct(Long productId) {

@@ -4,6 +4,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
 import com.marketengine.backend.product.application.ProductListSearcher;
@@ -23,6 +24,7 @@ public class JpaProductListSearcher implements ProductListSearcher {
     private final ProductRepository productRepository;
 
     @Override
+    @Transactional(readOnly = true)
     public Slice<ProductSummaryResponse> search(
             String keyword,
             ProductCategory category,

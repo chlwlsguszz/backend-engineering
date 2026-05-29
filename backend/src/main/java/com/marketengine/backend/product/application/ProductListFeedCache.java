@@ -24,12 +24,18 @@ public class ProductListFeedCache {
             key = "#sortBy + ':' + #page + ':' + #size"
                     + " + ':' + (#category == null ? '-' : #category.name())"
                     + " + ':' + (#keyword == null ? '-' : #keyword)"
+                    + " + ':' + (#brand == null ? '-' : #brand)"
+                    + " + ':' + (#gender == null ? '-' : #gender)"
+                    + " + ':' + (#color == null ? '-' : #color)"
                     + " + ':' + (#minPrice == null ? '-' : #minPrice)"
                     + " + ':' + (#maxPrice == null ? '-' : #maxPrice)"
     )
     public ProductPageResponse get(
             String keyword,
             ProductCategory category,
+            String brand,
+            String gender,
+            String color,
             Integer minPrice,
             Integer maxPrice,
             String sortBy,
@@ -40,9 +46,9 @@ public class ProductListFeedCache {
         Slice<ProductSummaryResponse> pageResult = productListSearcher.search(
                 keyword,
                 category,
-                null,
-                null,
-                null,
+                brand,
+                gender,
+                color,
                 minPrice,
                 maxPrice,
                 sortBy,
@@ -51,4 +57,3 @@ public class ProductListFeedCache {
         return ProductPageResponse.from(pageResult);
     }
 }
-

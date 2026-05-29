@@ -8,6 +8,8 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/marketengine}
     username: ${SPRING_DATASOURCE_USERNAME:marketengine}
     password: ${SPRING_DATASOURCE_PASSWORD:marketengine}
+    hikari:
+      maximum-pool-size: 10
 
   jpa:
     open-in-view: false
@@ -30,6 +32,15 @@ spring:
 
   cache:
     type: redis
+
+server:
+  tomcat:
+    threads:
+      max: ${SERVER_TOMCAT_THREADS_MAX:200}
+      min-spare: ${SERVER_TOMCAT_THREADS_MIN_SPARE:50}
+    # Tomcat thread metrics (tomcat.threads.*) for Prometheus / Grafana Utilisation panel
+    mbeanregistry:
+      enabled: true
 
 marketengine:
   cache:
@@ -60,6 +71,9 @@ springdoc:
     tags-sorter: alpha
 
 management:
+  metrics:
+    tags:
+      application: ${spring.application.name}
   endpoints:
     web:
       exposure:
