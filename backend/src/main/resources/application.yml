@@ -36,7 +36,7 @@ spring:
 server:
   tomcat:
     threads:
-      max: ${SERVER_TOMCAT_THREADS_MAX:200}
+      max: ${SERVER_TOMCAT_THREADS_MAX:400}
       min-spare: ${SERVER_TOMCAT_THREADS_MIN_SPARE:50}
     # Tomcat thread metrics (tomcat.threads.*) for Prometheus / Grafana Utilisation panel
     mbeanregistry:

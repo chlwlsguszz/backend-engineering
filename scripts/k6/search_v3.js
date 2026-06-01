@@ -4,27 +4,29 @@ import { check, sleep } from "k6";
 /**
  * /api/products 고 RPS 부하 (v3) — 소수 VU, 극소 sleep, 요청 수 극대화
  *
- * v2 대비: VU↓, think time↓, constant-arrival-rate로 초당 요청 수 직접 제어
+ * v2 대비: VU↓, think time↓, ramping-arrival-rate로 RPS 웜업 후 목표 유지
  *
- * 기본: k6 run scripts/k6/search_v3.js
- * RPS 조절: k6 run -e TARGET_RPS=900 -e DURATION=5m scripts/k6/search_v3.js
- * VU 상한: k6 run -e MAX_VUS=120 -e PREALLOCATED_VUS=24 scripts/k6/search_v3.js
+ * 기본: k6 run scripts/k6/search_v3.js  (2m 웜업 0→TARGET_RPS, 이후 HOLD 동안 유지)
+ * RPS: k6 run -e TARGET_RPS=10000 -e WARM_UP=3m -e HOLD=5m scripts/k6/search_v3.js
+ * VU: k6 run -e MAX_VUS=1200 -e PREALLOCATED_VUS=400 scripts/k6/search_v3.js
  */
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:8080";
 const SLOW_MS = Number(__ENV.SLOW_MS || 100);
-const LOG_SLOW = __ENV.LOG_SLOW !== "0";
+const LOG_SLOW = __ENV.LOG_SLOW === "1";
 const SIZE = Number(__ENV.SIZE || 12);
 
 // 극소 think (0~20ms). 0으로 고정: THINK_MIN_MS=0 THINK_MAX_MS=0
 const THINK_MIN_MS = Number(__ENV.THINK_MIN_MS ?? 0);
 const THINK_MAX_MS = Number(__ENV.THINK_MAX_MS ?? 20);
 
-// 초당 목표 요청 수 (simple:complex:keyword = 3:1:1). 기본 600/s (이전 200/s의 3배)
-const TARGET_RPS = Number(__ENV.TARGET_RPS || 600);
-const DURATION = __ENV.DURATION || __ENV.HOLD || "3m";
-const PREALLOCATED_VUS = Number(__ENV.PREALLOCATED_VUS || 12);
-const MAX_VUS = Number(__ENV.MAX_VUS || 60);
+// 초당 목표 요청 수 (simple:complex:keyword = 3:1:1). 기본 10000/s
+const TARGET_RPS = Number(__ENV.TARGET_RPS || 10000);
+const WARM_UP = __ENV.WARM_UP || "30s";
+const HOLD = __ENV.HOLD || __ENV.DURATION || "30s";
+// High-RPS preset: keep enough VUs to avoid dropped_iterations during hold.
+const PREALLOCATED_VUS = Number(__ENV.PREALLOCATED_VUS || 400);
+const MAX_VUS = Number(__ENV.MAX_VUS || 1200);
 
 const SIMPLE_RATE = Math.max(1, Math.floor((TARGET_RPS * 3) / 5));
 const COMPLEX_RATE = Math.max(1, Math.floor(TARGET_RPS / 5));
@@ -35,7 +37,7 @@ export function setup() {
     `[k6 v3] TARGET_RPS=${TARGET_RPS} → simple=${SIMPLE_RATE}/s, complex=${COMPLEX_RATE}/s, keyword=${KEYWORD_RATE}/s`
   );
   console.log(
-    `[k6 v3] VUs preAllocated=${PREALLOCATED_VUS}, max=${MAX_VUS} | think ${THINK_MIN_MS}~${THINK_MAX_MS}ms | ${DURATION}`
+    `[k6 v3] warm-up ${WARM_UP} 0→TARGET_RPS, hold ${HOLD} | VUs ${PREALLOCATED_VUS}/${MAX_VUS} | think ${THINK_MIN_MS}~${THINK_MAX_MS}ms`
   );
 }
 
@@ -135,7 +137,8 @@ function randomPage() {
   const r = Math.random();
   if (r < 0.70) return 0;
   if (r < 0.90) return 1;
-  return Math.floor(Math.random() * 4) + 2;
+  // Cap deep pagination: 0~2 only (avoid ES offset paging tail explosion on page>=3)
+  return 2;
 }
 
 function priceBand() {
@@ -174,12 +177,15 @@ function getProducts(params, name) {
 
 function arrivalScenario(rate, exec, scenario) {
   return {
-    executor: "constant-arrival-rate",
-    rate,
+    executor: "ramping-arrival-rate",
+    startRate: 0,
     timeUnit: "1s",
-    duration: DURATION,
     preAllocatedVUs: PREALLOCATED_VUS,
     maxVUs: MAX_VUS,
+    stages: [
+      { duration: WARM_UP, target: rate },
+      { duration: HOLD, target: rate },
+    ],
     exec,
     tags: { scenario },
   };

@@ -4,20 +4,23 @@ import { check, sleep } from "k6";
 /**
  * /api/products 부하 — simple : complex : keyword = 3 : 1 : 1 (병렬, ramping & spike)
  *
- * 기본 실행 (스파이크 패턴 포함): k6 run scripts/k6/search.js
- * 커스텀 실행: k6 run -e TOTAL_VUS=1000 -e RAMP_UP=1m -e HOLD=5m scripts/k6/search.js
+ * 기본 실행 (2분 ramp 0→15k VU): k6 run scripts/k6/search_v2.js
+ * 커스텀: k6 run -e TOTAL_VUS=20000 -e RAMP_UP=2m scripts/k6/search_v2.js
+ * (단일 backend+ES+Redis 기준 VU 2만대부터 에러율 급증 흔함 → RPS 제어는 search_v3.js 권장)
  */
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:8080";
 const SLOW_MS = Number(__ENV.SLOW_MS || 100);
-const LOG_SLOW = __ENV.LOG_SLOW !== "0";
+const LOG_SLOW = __ENV.LOG_SLOW === "1";
 const SIZE = Number(__ENV.SIZE || 12);
 
 // Think Time: 사람의 실제 인지 및 탐색 시간 (2초 ~ 8초)
 const THINK_MIN_MS = Number(__ENV.THINK_MIN_MS || 2000);
 const THINK_MAX_MS = Number(__ENV.THINK_MAX_MS || 8000);
 
-const TOTAL_VUS = Number(__ENV.TOTAL_VUS || 50);
+// Default: ramp 0 -> 15k VUs in 2m. 단일 노드 스택에서 ~20k+ VU부터 타임아웃/5xx 급증 관측됨.
+const TOTAL_VUS = Number(__ENV.TOTAL_VUS || 15000);
+const RAMP_UP = __ENV.RAMP_UP || "2m";
 const SIMPLE_VUS = Math.floor((TOTAL_VUS * 3) / 5);
 const COMPLEX_VUS = Math.floor(TOTAL_VUS / 5);
 const KEYWORD_VUS = TOTAL_VUS - SIMPLE_VUS - COMPLEX_VUS;
@@ -130,12 +133,12 @@ function weightedPick(items) {
   return items[items.length - 1].name;
 }
 
-// 페이징 부하 유발: 70% 첫 페이지, 나머지 딥 다이브
 function randomPage() {
   const r = Math.random();
   if (r < 0.70) return 0;
   if (r < 0.90) return 1;
-  return Math.floor(Math.random() * 4) + 2; 
+  // Cap deep pagination: 0~2 only (avoid ES offset paging tail explosion on page>=3)
+  return 2;
 }
 
 function priceBand() {
@@ -182,14 +185,9 @@ function getStages(target) {
       { duration: hold, target },
     ];
   }
-  
-  // 스파이크 트래픽 모사
-  return [
-    { duration: "30s", target: Math.floor(target * 0.5) }, // 웜업
-    { duration: "1m", target: target },                    // 평시 트래픽
-    { duration: "30s", target: target * 2 },               // 스파이크 폭주
-    { duration: "1m", target: target },                    // 회복
-  ];
+
+  // Default: ramp-only (no hold, no spike)
+  return [{ duration: RAMP_UP, target }];
 }
 
 function rampScenario(target, exec, scenario) {
