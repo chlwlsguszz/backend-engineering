@@ -9,7 +9,6 @@ import org.springframework.stereotype.Service;
 import com.marketengine.backend.common.config.RedisCacheConfig;
 import com.marketengine.backend.product.api.ProductDtos.ProductPageResponse;
 import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
-import com.marketengine.backend.product.domain.ProductCategory;
 
 import lombok.RequiredArgsConstructor;
 
@@ -21,37 +20,20 @@ public class ProductListFeedCache {
 
     @Cacheable(
             cacheNames = RedisCacheConfig.PRODUCT_LIST_FEED,
-            key = "#sortBy + ':' + #page + ':' + #size"
-                    + " + ':' + (#category == null ? '-' : #category.name())"
-                    + " + ':' + (#keyword == null ? '-' : #keyword)"
-                    + " + ':' + (#brand == null ? '-' : #brand)"
-                    + " + ':' + (#gender == null ? '-' : #gender)"
-                    + " + ':' + (#color == null ? '-' : #color)"
-                    + " + ':' + (#minPrice == null ? '-' : #minPrice)"
-                    + " + ':' + (#maxPrice == null ? '-' : #maxPrice)"
+            key = "#feedKey.value()"
     )
-    public ProductPageResponse get(
-            String keyword,
-            ProductCategory category,
-            String brand,
-            String gender,
-            String color,
-            Integer minPrice,
-            Integer maxPrice,
-            String sortBy,
-            int page,
-            int size
-    ) {
-        Pageable pageable = PageRequest.of(page, size);
+    public ProductPageResponse get(ProductListFeedKey feedKey) {
+        ProductListFeedQuery query = feedKey.query();
+        Pageable pageable = PageRequest.of(query.page(), query.size());
         Slice<ProductSummaryResponse> pageResult = productListSearcher.search(
-                keyword,
-                category,
-                brand,
-                gender,
-                color,
-                minPrice,
-                maxPrice,
-                sortBy,
+                query.keyword(),
+                query.category(),
+                query.brand(),
+                query.gender(),
+                query.color(),
+                query.minPrice(),
+                query.maxPrice(),
+                query.sortBy(),
                 pageable
         );
         return ProductPageResponse.from(pageResult);

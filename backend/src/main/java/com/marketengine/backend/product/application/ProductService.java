@@ -71,24 +71,13 @@ public class ProductService {
             int page,
             int size
     ) {
-        if (isCacheableFeedRequest(keyword, category, brand, gender, color, minPrice, maxPrice, sortBy, page, size)) {
-            return productListFeedCache.get(
-                    keyword, category, brand, gender, color, minPrice, maxPrice, sortBy, page, size
-            );
-        }
-        Pageable pageable = PageRequest.of(page, size);
-        Slice<ProductSummaryResponse> pageResult = productListSearcher.search(
-                keyword,
-                category,
-                brand,
-                gender,
-                color,
-                minPrice,
-                maxPrice,
-                sortBy,
-                pageable
-        );
-        return ProductPageResponse.from(pageResult);
+        return ProductListFeedKeyResolver.resolve(
+                        keyword, category, brand, gender, color, minPrice, maxPrice, sortBy, page, size
+                )
+                .map(productListFeedCache::get)
+                .orElseGet(() -> searchProducts(
+                        keyword, category, brand, gender, color, minPrice, maxPrice, sortBy, page, size
+                ));
     }
 
     @Transactional
@@ -121,10 +110,7 @@ public class ProductService {
         productSearchIndexer.delete(productId);
     }
 
-    private static final int FEED_PAGE_SIZE = 12;
-    private static final int MAX_CACHED_PAGE = 2;
-
-    private boolean isCacheableFeedRequest(
+    private ProductPageResponse searchProducts(
             String keyword,
             ProductCategory category,
             String brand,
@@ -136,79 +122,19 @@ public class ProductService {
             int page,
             int size
     ) {
-        if (size != FEED_PAGE_SIZE || page < 0 || page > MAX_CACHED_PAGE) {
-            return false;
-        }
-        if (!("LATEST".equals(sortBy) || "POPULARITY".equals(sortBy))) {
-            return false;
-        }
-
-        boolean hasKeyword = hasText(keyword);
-        boolean hasCategory = category != null;
-        boolean hasBrand = hasText(brand);
-        boolean hasGender = hasText(gender);
-        boolean hasColor = hasText(color);
-        boolean hasPriceBand = minPrice != null || maxPrice != null;
-
-        if (!hasBrand && !hasGender && !hasColor) {
-            return matchesCacheableFeedWithoutFacetFilters(
-                    hasKeyword, hasCategory, hasPriceBand
-            );
-        }
-
-        return matchesCacheableFeedWithFacetFilters(
-                hasKeyword, hasCategory, hasBrand, hasGender, hasColor, hasPriceBand
+        Pageable pageable = PageRequest.of(page, size);
+        Slice<ProductSummaryResponse> pageResult = productListSearcher.search(
+                keyword,
+                category,
+                brand,
+                gender,
+                color,
+                minPrice,
+                maxPrice,
+                sortBy,
+                pageable
         );
-    }
-
-    private static boolean matchesCacheableFeedWithoutFacetFilters(
-            boolean hasKeyword,
-            boolean hasCategory,
-            boolean hasPriceBand
-    ) {
-        if (!hasKeyword && !hasCategory && !hasPriceBand) {
-            return true;
-        }
-        if (hasCategory && !hasKeyword && !hasPriceBand) {
-            return true;
-        }
-        if (hasKeyword && !hasCategory && !hasPriceBand) {
-            return true;
-        }
-        if (!hasKeyword && !hasCategory && hasPriceBand) {
-            return true;
-        }
-        if (hasKeyword && !hasCategory && hasPriceBand) {
-            return true;
-        }
-        return hasKeyword && hasCategory && !hasPriceBand;
-    }
-
-    private static boolean matchesCacheableFeedWithFacetFilters(
-            boolean hasKeyword,
-            boolean hasCategory,
-            boolean hasBrand,
-            boolean hasGender,
-            boolean hasColor,
-            boolean hasPriceBand
-    ) {
-        if (hasCategory && hasBrand && !hasKeyword && !hasPriceBand && !hasGender && !hasColor) {
-            return true;
-        }
-        if (hasCategory && hasGender && hasColor && !hasKeyword && !hasBrand && !hasPriceBand) {
-            return true;
-        }
-        if (hasBrand && hasGender && !hasCategory && !hasKeyword && !hasPriceBand && !hasColor) {
-            return true;
-        }
-        if (hasCategory && hasBrand && hasGender && hasColor && hasPriceBand && !hasKeyword) {
-            return true;
-        }
-        return hasKeyword && hasCategory && hasBrand && hasGender && hasColor && hasPriceBand;
-    }
-
-    private static boolean hasText(String value) {
-        return value != null && !value.isBlank();
+        return ProductPageResponse.from(pageResult);
     }
 
     private Product findProduct(Long productId) {
