@@ -1,30 +1,44 @@
 package com.marketengine.backend.product.infrastructure.search;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductRepository;
-
-import lombok.RequiredArgsConstructor;
 
 /**
  * Step 4: keep Elasticsearch {@link ProductDocument} in sync with PostgreSQL on CUD.
  * List/search API still uses PostgreSQL until step 5.
  */
 @Component
-@RequiredArgsConstructor
 public class ProductSearchIndexer {
 
-    private final ProductSearchRepository productSearchRepository;
+    private final ObjectProvider<ProductSearchRepository> productSearchRepository;
     private final ProductRepository productRepository;
 
+    public ProductSearchIndexer(
+            ObjectProvider<ProductSearchRepository> productSearchRepository,
+            ProductRepository productRepository
+    ) {
+        this.productSearchRepository = productSearchRepository;
+        this.productRepository = productRepository;
+    }
+
     public void index(Product product) {
+        ProductSearchRepository repository = productSearchRepository.getIfAvailable();
+        if (repository == null) {
+            return;
+        }
         Product source = resolveProductForIndex(product);
-        productSearchRepository.save(ProductDocument.from(source));
+        repository.save(ProductDocument.from(source));
     }
 
     public void delete(Long productId) {
-        productSearchRepository.deleteById(productId);
+        ProductSearchRepository repository = productSearchRepository.getIfAvailable();
+        if (repository == null) {
+            return;
+        }
+        repository.deleteById(productId);
     }
 
     /**

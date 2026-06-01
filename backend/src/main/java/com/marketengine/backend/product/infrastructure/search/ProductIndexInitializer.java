@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(name = "marketengine.elasticsearch.enabled", havingValue = "true", matchIfMissing = true)
 @ConditionalOnProperty(name = "marketengine.elasticsearch.index.ensure-on-startup", havingValue = "true", matchIfMissing = true)
 public class ProductIndexInitializer implements ApplicationListener<ApplicationReadyEvent> {
 
