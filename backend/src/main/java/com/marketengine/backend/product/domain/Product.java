@@ -11,6 +11,10 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+
+import com.marketengine.backend.common.exception.BusinessException;
+import com.marketengine.backend.common.exception.ErrorCode;
+
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -84,6 +88,16 @@ public class Product {
         this.gender = gender;
         this.status = status;
         this.popularityScore = popularityScore;
+    }
+
+    public void decreaseStock(int quantity) {
+        if (quantity <= 0) {
+            throw new IllegalArgumentException("quantity must be positive");
+        }
+        if (stockQuantity < quantity) {
+            throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK, "Insufficient stock");
+        }
+        stockQuantity -= quantity;
     }
 
     public void changeInfo(

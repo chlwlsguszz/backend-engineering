@@ -68,6 +68,32 @@ class OrderServiceTest {
         assertThat(response.unitPrice()).isEqualByComparingTo("30.00");
         assertThat(response.totalAmount()).isEqualByComparingTo("90.00");
         assertThat(response.status()).isEqualTo(OrderStatus.CREATED);
+        assertThat(product.getStockQuantity()).isEqualTo(2);
+    }
+
+    @Test
+    void create_throwsInsufficientStockWhenQuantityExceedsStock() {
+        Member member = new Member("user@test.com", "pw", "user");
+        Product product = new Product(
+                "book",
+                new BigDecimal("30.00"),
+                5,
+                "book detail",
+                ProductCategory.TOP,
+                "CORE",
+                "BLACK",
+                "UNISEX",
+                "ACTIVE",
+                100
+        );
+
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(productRepository.findById(2L)).thenReturn(Optional.of(product));
+
+        assertThatThrownBy(() -> orderService.create(new CreateOrderRequest(1L, 2L, 6)))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.INSUFFICIENT_STOCK));
+        assertThat(product.getStockQuantity()).isEqualTo(5);
     }
 
     @Test

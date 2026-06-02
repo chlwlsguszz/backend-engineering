@@ -7,6 +7,7 @@ import org.springframework.http.HttpStatus;
  */
 public enum ErrorCode {
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "Resource not found"),
+    INSUFFICIENT_STOCK(HttpStatus.CONFLICT, "Insufficient stock"),
     CONFLICT(HttpStatus.CONFLICT, "Conflict"),
     VALIDATION_FAILED(HttpStatus.BAD_REQUEST, "Validation failed"),
     INVALID_REQUEST(HttpStatus.BAD_REQUEST, "Invalid request"),

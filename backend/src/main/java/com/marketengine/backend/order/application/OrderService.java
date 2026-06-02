@@ -36,6 +36,8 @@ public class OrderService {
         Product product = productRepository.findById(request.productId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Product not found"));
 
+        product.decreaseStock(request.quantity());
+
         Order saved = orderRepository.save(
                 new Order(member, product, request.quantity(), product.getPriceAmount(), OrderStatus.CREATED)
         );

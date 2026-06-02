@@ -16,6 +16,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -52,7 +53,7 @@ public class Order {
     @Column(name = "total_amount", nullable = false, precision = 19, scale = 4)
     private BigDecimal totalAmount;
 
-    @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
     public Order(Member member, Product product, int quantity, BigDecimal unitPrice, OrderStatus status) {
@@ -62,6 +63,13 @@ public class Order {
         this.unitPrice = unitPrice;
         this.status = status;
         this.totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity));
+    }
+
+    @PrePersist
+    void assignCreatedAt() {
+        if (createdAt == null) {
+            createdAt = OffsetDateTime.now();
+        }
     }
 
     public void changeStatus(OrderStatus status) {
