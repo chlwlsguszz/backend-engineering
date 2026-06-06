@@ -60,7 +60,7 @@ class OrderServiceTest {
         );
 
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
-        when(productRepository.findById(2L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(product));
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         OrderResponse response = orderService.create(new CreateOrderRequest(1L, 2L, 3));
@@ -88,7 +88,7 @@ class OrderServiceTest {
         );
 
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
-        when(productRepository.findById(2L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(product));
 
         assertThatThrownBy(() -> orderService.create(new CreateOrderRequest(1L, 2L, 6)))
                 .isInstanceOf(BusinessException.class)

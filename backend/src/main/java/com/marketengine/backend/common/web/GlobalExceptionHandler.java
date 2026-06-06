@@ -4,6 +4,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -69,6 +71,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleNoResourceFound(NoResourceFoundException ex) {
         ApiError apiError = ApiError.of(ErrorCode.RESOURCE_NOT_FOUND.code(), "No static resource for this path");
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.fail(apiError));
+    }
+
+    @ExceptionHandler({PessimisticLockingFailureException.class, CannotAcquireLockException.class})
+    public ResponseEntity<ApiResponse<Void>> handlePessimisticLockingFailure(RuntimeException ex) {
+        log.debug("Pessimistic lock acquisition failed", ex);
+        ApiError apiError = ApiError.of(ErrorCode.CONFLICT.code(), "Product is busy. Please retry.");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail(apiError));
     }
 
     @ExceptionHandler(Exception.class)

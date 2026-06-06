@@ -9,7 +9,7 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:marketengine}
     password: ${SPRING_DATASOURCE_PASSWORD:marketengine}
     hikari:
-      maximum-pool-size: 10
+      maximum-pool-size: ${SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE:100}
 
   jpa:
     open-in-view: false

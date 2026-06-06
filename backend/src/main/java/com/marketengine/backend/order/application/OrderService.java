@@ -33,7 +33,7 @@ public class OrderService {
     public OrderResponse create(CreateOrderRequest request) {
         Member member = memberRepository.findById(request.memberId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Member not found"));
-        Product product = productRepository.findById(request.productId())
+        Product product = productRepository.findByIdForUpdate(request.productId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Product not found"));
 
         product.decreaseStock(request.quantity());

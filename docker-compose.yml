@@ -49,6 +49,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/marketengine
       SPRING_DATASOURCE_USERNAME: marketengine
       SPRING_DATASOURCE_PASSWORD: marketengine
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "100"
       SPRING_ELASTICSEARCH_URIS: http://elasticsearch:9200
       SPRING_DATA_REDIS_HOST: redis
       MARKETENGINE_CACHE_REDIS_ENABLED: "true"

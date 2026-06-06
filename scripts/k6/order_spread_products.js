@@ -3,23 +3,26 @@ import { check, sleep } from "k6";
 import { Counter } from "k6/metrics";
 
 /**
- * Order hot-stock load test — POST /api/orders against ONE hot productId.
+ * Order spread load test — POST /api/orders across fixture products (even distribution).
+ *
+ * Targets product IDs PRODUCT_ID_MIN .. PRODUCT_ID_MAX (default: seed block 10000501–10001500).
+ * Each iteration picks the next product in round-robin so load is spread evenly.
  * Load profile: ramping-arrival-rate 0 → TARGET_RPS, hold, ramp down.
  *
  * 기본 (0→10000 RPS in 20s, hold 20s, ramp-down 10s):
- *   k6 run scripts/k6/order_hot_stock.js
+ *   k6 run scripts/k6/order_spread_products.js
+ *
+ * Seed first:
+ *   .\scripts\sql\run-seed-order-products.ps1
  *
  * 커스텀:
- *   k6 run -e TARGET_RPS=5000 -e RAMP_UP=20s -e HOLD=20s scripts/k6/order_hot_stock.js
- *   k6 run -e PRODUCT_ID=10000501 -e MEMBER_ID_MIN=1 -e MEMBER_ID_MAX=50 -e QTY=1 scripts/k6/order_hot_stock.js
- *
- * 참고:
- * - 재고 seed: scripts/sql/seed_order_products_1000.sql
- * - dropped_iterations ↑ → PREALLOCATED_VUS / MAX_VUS 올리기
+ *   k6 run -e TARGET_RPS=10000 -e RAMP_UP=20s -e HOLD=20s scripts/k6/order_spread_products.js
+ *   k6 run -e PRODUCT_ID_MIN=10000501 -e PRODUCT_ID_MAX=10001500 scripts/k6/order_spread_products.js
  */
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:8080";
-const PRODUCT_ID = Number(__ENV.PRODUCT_ID || 10000501);
+const PRODUCT_ID_MIN = Number(__ENV.PRODUCT_ID_MIN || 10000501);
+const PRODUCT_ID_MAX = Number(__ENV.PRODUCT_ID_MAX || 10001500);
 const MEMBER_ID_MIN = Number(__ENV.MEMBER_ID_MIN || 1);
 const MEMBER_ID_MAX = Number(__ENV.MEMBER_ID_MAX || 50);
 const QTY = Number(__ENV.QTY || 1);
@@ -29,10 +32,12 @@ const RAMP_UP = __ENV.RAMP_UP || __ENV.WARM_UP || "20s";
 const HOLD = __ENV.HOLD || __ENV.DURATION || "20s";
 const RAMP_DOWN = __ENV.RAMP_DOWN || "10s";
 const PREALLOCATED_VUS = Number(__ENV.PREALLOCATED_VUS || 800);
-const MAX_VUS = Number(__ENV.MAX_VUS || 3000);
+const MAX_VUS = Number(__ENV.MAX_VUS || 5000);
 
 const THINK_MIN_MS = Number(__ENV.THINK_MIN_MS ?? 0);
 const THINK_MAX_MS = Number(__ENV.THINK_MAX_MS ?? 10);
+
+const PRODUCT_COUNT = Math.max(1, PRODUCT_ID_MAX - PRODUCT_ID_MIN + 1);
 
 const created = new Counter("orders_created");
 const insufficient = new Counter("orders_insufficient_stock");
@@ -42,7 +47,7 @@ const ENFORCE_THRESHOLDS = __ENV.ENFORCE_THRESHOLDS === "1";
 
 export const options = {
   scenarios: {
-    hot: {
+    spread: {
       executor: "ramping-arrival-rate",
       startRate: 0,
       timeUnit: "1s",
@@ -59,28 +64,42 @@ export const options = {
 };
 
 export function setup() {
+  if (PRODUCT_ID_MIN > PRODUCT_ID_MAX) {
+    throw new Error(`PRODUCT_ID_MIN (${PRODUCT_ID_MIN}) must be <= PRODUCT_ID_MAX (${PRODUCT_ID_MAX})`);
+  }
+
   console.log(
-    `[k6 order] BASE_URL=${BASE_URL} productId=${PRODUCT_ID} qty=${QTY} | members ${MEMBER_ID_MIN}..${MEMBER_ID_MAX}`,
+    `[k6 order spread] BASE_URL=${BASE_URL} products ${PRODUCT_ID_MIN}..${PRODUCT_ID_MAX} (${PRODUCT_COUNT} SKUs) qty=${QTY}`,
   );
   console.log(
-    `[k6 order] TARGET_RPS=${TARGET_RPS} | ramp ${RAMP_UP}, hold ${HOLD}, ramp-down ${RAMP_DOWN} | VUs ${PREALLOCATED_VUS}/${MAX_VUS} | think ${THINK_MIN_MS}~${THINK_MAX_MS}ms`,
+    `[k6 order spread] TARGET_RPS=${TARGET_RPS} | ramp ${RAMP_UP}, hold ${HOLD}, ramp-down ${RAMP_DOWN} | VUs ${PREALLOCATED_VUS}/${MAX_VUS} | members ${MEMBER_ID_MIN}..${MEMBER_ID_MAX}`,
   );
 }
 
-export default function () {
+function pickProductId() {
+  const offset = (__ITER + (__VU - 1)) % PRODUCT_COUNT;
+  return PRODUCT_ID_MIN + offset;
+}
+
+function pickMemberId() {
   const memberRange = Math.max(1, MEMBER_ID_MAX - MEMBER_ID_MIN + 1);
-  const memberId = MEMBER_ID_MIN + ((__ITER + (__VU - 1)) % memberRange);
+  return MEMBER_ID_MIN + ((__ITER + (__VU - 1)) % memberRange);
+}
+
+export default function () {
+  const productId = pickProductId();
+  const memberId = pickMemberId();
 
   const url = `${BASE_URL}/api/orders`;
   const payload = JSON.stringify({
     memberId,
-    productId: PRODUCT_ID,
+    productId,
     quantity: QTY,
   });
 
   const res = http.post(url, payload, {
     headers: { "Content-Type": "application/json" },
-    tags: { name: "POST /api/orders" },
+    tags: { name: "POST /api/orders", product_id: String(productId) },
   });
 
   const ok = check(res, {
