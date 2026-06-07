@@ -95,6 +95,7 @@ export default function () {
     memberId,
     productId,
     quantity: QTY,
+    idempotencyKey: `${memberId}-${productId}-${__VU}-${__ITER}`,
   });
 
   const res = http.post(url, payload, {

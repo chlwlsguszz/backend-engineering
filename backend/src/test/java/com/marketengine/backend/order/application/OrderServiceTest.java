@@ -3,6 +3,8 @@ package com.marketengine.backend.order.application;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -13,6 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import com.marketengine.backend.common.exception.BusinessException;
 import com.marketengine.backend.common.exception.ErrorCode;
@@ -26,7 +29,6 @@ import com.marketengine.backend.order.domain.OrderRepository;
 import com.marketengine.backend.order.domain.OrderStatus;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductCategory;
-import com.marketengine.backend.product.domain.ProductRepository;
 
 @ExtendWith(MockitoExtension.class)
 class OrderServiceTest {
@@ -38,13 +40,39 @@ class OrderServiceTest {
     private MemberRepository memberRepository;
 
     @Mock
-    private ProductRepository productRepository;
+    private OrderCreateExecutor orderCreateExecutor;
 
     @InjectMocks
     private OrderService orderService;
 
     @Test
-    void create_buildsOrderWithProductPrice() {
+    void create_delegatesToExecutorWhenIdempotencyKeyIsNew() {
+        Member member = new Member("user@test.com", "pw", "user");
+        CreateOrderRequest request = new CreateOrderRequest(1L, 2L, 3, "key-1");
+        OrderResponse expected = new OrderResponse(
+                99L,
+                1L,
+                2L,
+                3,
+                new BigDecimal("30.00"),
+                OrderStatus.CREATED,
+                new BigDecimal("90.00"),
+                "key-1",
+                null
+        );
+
+        when(orderRepository.findByMemberIdAndIdempotencyKey(1L, "key-1")).thenReturn(Optional.empty());
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(orderCreateExecutor.execute(request, member)).thenReturn(expected);
+
+        OrderResponse response = orderService.create(request);
+
+        assertThat(response).isEqualTo(expected);
+        verify(orderCreateExecutor).execute(request, member);
+    }
+
+    @Test
+    void create_returnsExistingOrderWithoutCallingExecutorWhenIdempotencyKeyMatches() {
         Member member = new Member("user@test.com", "pw", "user");
         Product product = new Product(
                 "book",
@@ -58,21 +86,22 @@ class OrderServiceTest {
                 "ACTIVE",
                 100
         );
+        ReflectionTestUtils.setField(product, "id", 2L);
+        Order existing = new Order(member, product, 3, new BigDecimal("30.00"), OrderStatus.CREATED, "key-1");
+        CreateOrderRequest request = new CreateOrderRequest(1L, 2L, 3, "key-1");
 
-        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
-        when(productRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(product));
-        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(orderRepository.findByMemberIdAndIdempotencyKey(1L, "key-1")).thenReturn(Optional.of(existing));
 
-        OrderResponse response = orderService.create(new CreateOrderRequest(1L, 2L, 3));
+        OrderResponse response = orderService.create(request);
 
-        assertThat(response.unitPrice()).isEqualByComparingTo("30.00");
-        assertThat(response.totalAmount()).isEqualByComparingTo("90.00");
-        assertThat(response.status()).isEqualTo(OrderStatus.CREATED);
-        assertThat(product.getStockQuantity()).isEqualTo(2);
+        assertThat(response.quantity()).isEqualTo(3);
+        assertThat(response.idempotencyKey()).isEqualTo("key-1");
+        verify(orderCreateExecutor, never()).execute(any(), any());
+        verify(memberRepository, never()).findById(any());
     }
 
     @Test
-    void create_throwsInsufficientStockWhenQuantityExceedsStock() {
+    void create_throwsWhenIdempotencyKeyReusedWithDifferentPayload() {
         Member member = new Member("user@test.com", "pw", "user");
         Product product = new Product(
                 "book",
@@ -86,23 +115,15 @@ class OrderServiceTest {
                 "ACTIVE",
                 100
         );
+        ReflectionTestUtils.setField(product, "id", 2L);
+        Order existing = new Order(member, product, 3, new BigDecimal("30.00"), OrderStatus.CREATED, "key-1");
 
-        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
-        when(productRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(product));
+        when(orderRepository.findByMemberIdAndIdempotencyKey(1L, "key-1")).thenReturn(Optional.of(existing));
 
-        assertThatThrownBy(() -> orderService.create(new CreateOrderRequest(1L, 2L, 6)))
+        assertThatThrownBy(() -> orderService.create(new CreateOrderRequest(1L, 2L, 5, "key-1")))
                 .isInstanceOf(BusinessException.class)
-                .satisfies(ex -> assertThat(((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.INSUFFICIENT_STOCK));
-        assertThat(product.getStockQuantity()).isEqualTo(5);
-    }
-
-    @Test
-    void create_throwsNotFoundWhenMemberMissing() {
-        when(memberRepository.findById(1L)).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> orderService.create(new CreateOrderRequest(1L, 2L, 1)))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(ex -> assertThat(((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.RESOURCE_NOT_FOUND));
+                .satisfies(ex -> assertThat(((BusinessException) ex).errorCode())
+                        .isEqualTo(ErrorCode.IDEMPOTENCY_KEY_CONFLICT));
     }
 
     @Test
@@ -120,7 +141,7 @@ class OrderServiceTest {
                 "ACTIVE",
                 100
         );
-        Order order = new Order(member, product, 1, new BigDecimal("30.00"), OrderStatus.CREATED);
+        Order order = new Order(member, product, 1, new BigDecimal("30.00"), OrderStatus.CREATED, "key-1");
         when(orderRepository.findById(10L)).thenReturn(Optional.of(order));
 
         OrderResponse response = orderService.update(10L, new UpdateOrderRequest(OrderStatus.CONFIRMED, 2));

@@ -66,7 +66,7 @@ class OrderServiceStockRollbackIntegrationTest {
                 .when(orderRepository)
                 .save(any(Order.class));
 
-        assertThatThrownBy(() -> orderService.create(new CreateOrderRequest(memberId, productId, 1)))
+        assertThatThrownBy(() -> orderService.create(new CreateOrderRequest(memberId, productId, 1, "it-rollback")))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("simulate persist failure");
 

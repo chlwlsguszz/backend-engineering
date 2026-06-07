@@ -18,12 +18,19 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 @Entity
-@Table(name = "orders")
+@Table(
+        name = "orders",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_orders_member_idempotency_key",
+                columnNames = {"member_id", "idempotency_key"}
+        )
+)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Order {
@@ -53,15 +60,26 @@ public class Order {
     @Column(name = "total_amount", nullable = false, precision = 19, scale = 4)
     private BigDecimal totalAmount;
 
+    @Column(name = "idempotency_key", length = 64)
+    private String idempotencyKey;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
-    public Order(Member member, Product product, int quantity, BigDecimal unitPrice, OrderStatus status) {
+    public Order(
+            Member member,
+            Product product,
+            int quantity,
+            BigDecimal unitPrice,
+            OrderStatus status,
+            String idempotencyKey
+    ) {
         this.member = member;
         this.product = product;
         this.quantity = quantity;
         this.unitPrice = unitPrice;
         this.status = status;
+        this.idempotencyKey = idempotencyKey;
         this.totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity));
     }
 

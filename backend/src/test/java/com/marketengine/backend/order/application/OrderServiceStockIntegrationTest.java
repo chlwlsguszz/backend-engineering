@@ -53,7 +53,7 @@ class OrderServiceStockIntegrationTest {
         long memberId = insertMember("order-it@test.com");
         long productId = insertProduct(10);
 
-        orderService.create(new CreateOrderRequest(memberId, productId, 1));
+        orderService.create(new CreateOrderRequest(memberId, productId, 1, "it-decrease-stock"));
 
         assertThat(loadStock(productId)).isEqualTo(9);
         assertThat(orderRepository.count()).isEqualTo(1);
@@ -64,7 +64,7 @@ class OrderServiceStockIntegrationTest {
         long memberId = insertMember("order-it-insufficient@test.com");
         long productId = insertProduct(10);
 
-        assertThatThrownBy(() -> orderService.create(new CreateOrderRequest(memberId, productId, 11)))
+        assertThatThrownBy(() -> orderService.create(new CreateOrderRequest(memberId, productId, 11, "it-insufficient")))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(ex -> assertThat(((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.INSUFFICIENT_STOCK));
 

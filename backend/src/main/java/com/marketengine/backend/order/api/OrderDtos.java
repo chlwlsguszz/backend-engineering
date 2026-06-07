@@ -7,7 +7,9 @@ import com.marketengine.backend.order.domain.Order;
 import com.marketengine.backend.order.domain.OrderStatus;
 
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 
 public final class OrderDtos {
 
@@ -17,7 +19,8 @@ public final class OrderDtos {
     public record CreateOrderRequest(
             @NotNull Long memberId,
             @NotNull Long productId,
-            @Min(1) int quantity
+            @Min(1) int quantity,
+            @NotBlank @Size(max = 64) String idempotencyKey
     ) {
     }
 
@@ -35,6 +38,7 @@ public final class OrderDtos {
             BigDecimal unitPrice,
             OrderStatus status,
             BigDecimal totalAmount,
+            String idempotencyKey,
             OffsetDateTime createdAt
     ) {
         public static OrderResponse from(Order order) {
@@ -46,6 +50,7 @@ public final class OrderDtos {
                     order.getUnitPrice(),
                     order.getStatus(),
                     order.getTotalAmount(),
+                    order.getIdempotencyKey(),
                     order.getCreatedAt()
             );
         }
