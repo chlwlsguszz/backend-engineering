@@ -15,7 +15,7 @@
 
 ## 🎯 Key Technical Achievements
 
-### 1. 1,000만 건 대용량 데이터 검색 성능 극대화
+### 1. 1,000만 건 대용량 데이터 검색 성능 최적화
 
 - QueryDSL을 도입하여 복잡한 필터 검색 코드를 효율적으로 개선했습니다.
 - 
@@ -37,7 +37,7 @@
 
 - 
     
-    `OffsetDateTime` JSON 직렬화 에러를 `JavaTimeModule` JSR-310 지원 설정을 통해 완벽하게 해결했습니다.
+    `OffsetDateTime` JSON 직렬화 에러를 `JavaTimeModule` JSR-310 지원 설정을 통해 해결했습니다.
     
 - 빈도가 높은 검색 필터 조합을 식별하여 Redis에 캐싱 처리하고 캐시 적중률 95%를 달성했습니다.
 - k6 부하 테스트 결과 동시 접속자 3만 명 수준인 최대 6,350 RPS를 기록했습니다.
@@ -47,7 +47,7 @@
 
 - 
     
-    `SELECT FOR UPDATE` 쿼리를 통한 비관적 락(Pessimistic Lock)으로 동시 접근에 의한 재고 감소 누락을 원천 방지했습니다.
+    `SELECT FOR UPDATE` 쿼리를 통한 비관적 락(Pessimistic Lock)으로 동시 접근에 의한 재고 감소 누락을 방지했습니다.
     
 - 트랜잭션 대기로 인한 커넥션 풀 고갈을 식별하고 HikariCP 풀을 조정하여 전체 주문 최대 3100 TPS를 달성했습니다.
 - UUID 기반의 멱등성 키와 회원 ID의 복합 유니크 인덱스를 설계하여 이중 결제를 차단했습니다.
