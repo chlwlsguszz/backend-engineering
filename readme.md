@@ -83,3 +83,7 @@
 - Frontend: `http://localhost:5173`
 - Backend API: `http://localhost:8080`
 - Swagger UI: `http://localhost:8080/swagger-ui.html`
+
+개인 블로그에 모든 과정을 기록했습니다.
+
+[chlwlsguszz.tistory.com/category/백엔드_엔지니어링_일지](https://chlwlsguszz.tistory.com/category/%EB%B0%B1%EC%97%94%EB%93%9C%20%EC%97%94%EC%A7%80%EB%8B%88%EC%96%B4%EB%A7%81%20%EC%9D%BC%EC%A7%80)
