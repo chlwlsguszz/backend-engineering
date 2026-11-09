@@ -48,6 +48,8 @@ services:
       dockerfile: Dockerfile
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/marketengine
+      CATALOG_PRODUCT_COUNT: "${CATALOG_PRODUCT_COUNT:-10000000}"
+      CATALOG_AS_OF: "${CATALOG_AS_OF:-now}"
       SPRING_DATASOURCE_USERNAME: marketengine
       SPRING_DATASOURCE_PASSWORD: marketengine
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "100"

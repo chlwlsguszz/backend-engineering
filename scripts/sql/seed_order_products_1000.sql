@@ -1,75 +1,72 @@
--- Order load-test products (1000 rows, fixed IDs).
--- Every run: delete fixture products (and their orders, FK) then insert fresh rows.
---
--- ID block: 10000501 .. 10001500 (first free ids after V2+V4: 500 + 10_000_000 = 10000500)
--- Name:     order-fix-0001 .. order-fix-1000
--- Price:    10000 + (index * 100)  → predictable total_amount in k6 audits
--- Stock:
---   - hot SKU (id=10000501, order-fix-0001): fixed 50000
---   - others: 2500..5000 (random each run)
--- Popularity: >= 5000 (random each run)
---
--- k6 env (example):
---   PRODUCT_ID_MIN=10000501  PRODUCT_ID_MAX=10001500
---   memberId: use existing seed members 1..50 (V2)
---
--- Run (repo root):
---   .\scripts\sql\run-seed-order-products.ps1
+-- Export order targets from one MVCC snapshot of the existing product catalog.
+-- The legacy filename is kept for the PowerShell entry point. This query is read-only.
+\if :{?seed}
+\else
+\set seed 42
+\endif
+\if :{?sample_count}
+\else
+\set sample_count 1000
+\endif
 
-BEGIN;
-
-DELETE FROM orders
-WHERE product_id BETWEEN 10000501 AND 10001500;
-
-DELETE FROM products
-WHERE id BETWEEN 10000501 AND 10001500;
-
-INSERT INTO products (
-    id,
-    name,
-    price_amount,
-    stock_quantity,
-    description,
-    category,
-    brand,
-    color,
-    gender,
-    status,
-    popularity_score,
-    updated_at
+WITH settings AS (
+    SELECT :'seed'::integer AS seed, LEAST(1000, GREATEST(1, :'sample_count'::integer)) AS requested
+),
+catalog AS NOT MATERIALIZED (
+    SELECT id, stock_quantity, price_amount, status
+    FROM products
+    -- k6 reads JSON IDs as JavaScript numbers.
+    WHERE id BETWEEN 1 AND 9007199254740991 AND brand <> 'OrderTestBrand'
+),
+eligible AS NOT MATERIALIZED (
+    SELECT id, stock_quantity, price_amount
+    FROM catalog
+    WHERE status = 'ACTIVE' AND stock_quantity > 0
+),
+bounds AS (
+    SELECT MIN(id) AS first_id, MAX(id) AS last_id FROM catalog
+),
+buckets AS (
+    SELECT bucket, seed,
+           first_id + (last_id - first_id + 1) * bucket / requested AS lo,
+           first_id + (last_id - first_id + 1) * (bucket + 1) / requested AS hi
+    FROM bounds CROSS JOIN settings
+    CROSS JOIN LATERAL generate_series(0, requested - 1) AS series(bucket)
+    WHERE first_id IS NOT NULL
+),
+pivots AS (
+    -- Disjoint half-open ID ranges. Wrap inside a range if its tail is empty.
+    SELECT lo, hi, lo + (hashtextextended(bucket::text, seed) & 9223372036854775807)
+                         % NULLIF(hi - lo, 0) AS pivot
+    FROM buckets
+    WHERE hi > lo
+),
+picks AS MATERIALIZED (
+    SELECT COALESCE(
+        (SELECT id FROM eligible WHERE id >= pivot AND id < hi ORDER BY id LIMIT 1),
+        (SELECT id FROM eligible WHERE id >= lo AND id < pivot ORDER BY id LIMIT 1)
+    ) AS id
+    FROM pivots
+),
+sample AS (
+    SELECT id FROM picks WHERE id IS NOT NULL
+    UNION ALL
+    (SELECT id FROM eligible
+     WHERE id NOT IN (SELECT id FROM picks WHERE id IS NOT NULL)
+     ORDER BY id
+     LIMIT (SELECT requested - (SELECT COUNT(id) FROM picks) FROM settings))
 )
-SELECT
-    10000500 + gs AS id,
-    'order-fix-' || lpad(gs::text, 4, '0') AS name,
-    (10000 + (gs * 100))::numeric(19, 4) AS price_amount,
-    CASE
-        WHEN gs = 1 THEN 50000
-        ELSE (2500 + floor(random() * 2501)::int)
-    END AS stock_quantity,
-    'Order k6 fixture product #' || gs AS description,
-    'TOP' AS category,
-    'OrderTestBrand' AS brand,
-    'BLACK' AS color,
-    'UNISEX' AS gender,
-    'ACTIVE' AS status,
-    (5000 + floor(random() * 5000)::int) AS popularity_score,
-    CURRENT_TIMESTAMP AS updated_at
-FROM generate_series(1, 1000) AS gs;
-
-SELECT setval(
-    pg_get_serial_sequence('products', 'id'),
-    GREATEST(
-        (SELECT COALESCE(MAX(id), 1) FROM products),
-        10001500
-    )
-);
-
-COMMIT;
-
-SELECT
-    COUNT(*) AS fixture_count,
-    MIN(id) AS min_id,
-    MAX(id) AS max_id
-FROM products
-WHERE id BETWEEN 10000501 AND 10001500
-  AND name LIKE 'order-fix-%';
+SELECT json_build_object(
+    'schemaVersion', 1,
+    'seed', settings.seed,
+    'requestedCount', settings.requested,
+    'generatedAt', statement_timestamp(),
+    'catalog', json_build_object('database', current_database(), 'minProductId', first_id, 'maxProductId', last_id),
+    'targets', COALESCE((
+        SELECT json_agg(json_build_object(
+                   'productId', e.id, 'initialStock', e.stock_quantity, 'unitPrice', e.price_amount::text
+               ) ORDER BY hashtextextended(e.id::text, settings.seed), e.id)
+        FROM sample JOIN eligible AS e ON e.id = sample.id
+    ), '[]'::json)
+)
+FROM settings CROSS JOIN bounds;

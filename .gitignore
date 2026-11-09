@@ -17,3 +17,5 @@ backend/out/
 *.log
 .env
 .env.*
+docker-project-execution-guide--f8c2b154.md
+scripts/k6/order-targets.json

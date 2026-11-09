@@ -4,6 +4,11 @@ spring:
   application:
     name: backend
 
+  flyway:
+    placeholders:
+      catalogProductCount: ${CATALOG_PRODUCT_COUNT:10000000}
+      catalogAsOf: ${CATALOG_AS_OF:now}
+
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/marketengine}
     username: ${SPRING_DATASOURCE_USERNAME:marketengine}
