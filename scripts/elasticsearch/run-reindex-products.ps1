@@ -1,37 +1,51 @@
-# Step 3: PostgreSQL products -> Elasticsearch bulk index.
-# Requires: docker compose up -d postgres elasticsearch
-#
-#   .\scripts\elasticsearch\run-reindex-products.ps1
-#   .\scripts\elasticsearch\run-reindex-products.ps1 -RecreateIndex
-#
-# On ~10M rows this can take a long time (tens of minutes depending on hardware).
-
+# Rebuild the product search documents from the PostgreSQL catalog.
+[CmdletBinding()]
 param(
-    [switch]$RecreateIndex
+    [switch]$RecreateIndex,
+    [ValidateRange(0, 8)]
+    [Nullable[int]]$Workers,
+    [ValidateRange(1, 2147483647)]
+    [Nullable[int]]$BatchSize
 )
 
-Set-Location (Resolve-Path "$PSScriptRoot\..\..")
+$ErrorActionPreference = 'Stop'
+$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+
+function Invoke-ReindexStep {
+    param([string]$FilePath, [string[]]$ArgumentList)
+
+    $executablePath = Get-Command -Name $FilePath -CommandType Application -ErrorAction Stop |
+        Select-Object -First 1 -ExpandProperty Path
+    # Windows PowerShell 5.1 can turn redirected native stderr into error records.
+    # Keep those diagnostics in the log; the process exit code determines success.
+    $ErrorActionPreference = 'Continue'
+    & $executablePath @ArgumentList 2>&1 | ForEach-Object { $_.ToString() }
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+}
 
 Write-Host "Starting postgres + elasticsearch ..."
-docker compose up -d postgres elasticsearch | Out-Null
+$composeFile = Join-Path $repoRoot 'docker-compose.yml'
+Invoke-ReindexStep 'docker.exe' @('compose', '-f', $composeFile, 'up', '-d', '--wait', 'postgres', 'elasticsearch')
 
 $argsList = @("--spring.profiles.active=reindex")
 if ($RecreateIndex) {
     $argsList += "--recreate-index"
 }
+if ($null -ne $Workers) {
+    $argsList += "--marketengine.elasticsearch.reindex.workers=$Workers"
+}
+if ($null -ne $BatchSize) {
+    $argsList += "--marketengine.elasticsearch.reindex.batch-size=$BatchSize"
+}
 
 Write-Host "Running bulk reindex (profile=reindex) ..."
-Push-Location backend
+Push-Location -LiteralPath (Join-Path $repoRoot 'backend')
 try {
-    & .\gradlew.bat bootRun --no-daemon --args="$($argsList -join ' ')"
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
+    Invoke-ReindexStep '.\gradlew.bat' @('bootRun', '--no-daemon', "--args=$($argsList -join ' ')")
 }
 finally {
     Pop-Location
 }
-
-Write-Host ""
-Write-Host "Verify document count:"
-Invoke-RestMethod "http://localhost:9200/products/_count"
+exit 0

@@ -1,10 +1,9 @@
--- Current schema and seed for a fresh database. Databases with Flyway
--- history continue on the V migrations; keep their identities and inventory.
+-- First migration of the unified catalog. Apply only to a fresh database.
 SET LOCAL TIME ZONE 'UTC';
 
 CREATE TEMP TABLE catalog_seed_settings (
     product_count integer NOT NULL CHECK (product_count BETWEEN 1 AND 10000000),
-    as_of timestamptz NOT NULL
+    as_of timestamptz NOT NULL CHECK (isfinite(as_of))
 ) ON COMMIT DROP;
 
 INSERT INTO catalog_seed_settings VALUES ('${catalogProductCount}'::integer, '${catalogAsOf}'::timestamptz);
@@ -30,7 +29,8 @@ CREATE TABLE products (
     gender VARCHAR(20) NOT NULL DEFAULT 'UNISEX',
     status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
     popularity_score INT NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_products_date_order CHECK (updated_at >= created_at)
 );
 
 CREATE TABLE orders (
@@ -165,13 +165,30 @@ SELECT setval(pg_get_serial_sequence('members', 'id'), 50);
 SELECT setval(pg_get_serial_sequence('products', 'id'), (SELECT product_count FROM catalog_seed_settings));
 SELECT setval(pg_get_serial_sequence('orders', 'id'), 2000);
 
--- Build the search indexes after the heap has been populated (same definitions as V5/V6).
+-- Build the search indexes once, after inserting the final product timestamps.
 CREATE INDEX idx_products_created_at_id ON products (created_at DESC, id DESC);
 CREATE INDEX idx_products_popularity_id ON products (popularity_score DESC, id DESC);
 CREATE INDEX idx_products_filter_latest_id ON products (category, brand, gender, color, created_at DESC, id DESC);
 CREATE INDEX idx_products_filter_popularity_id ON products (category, brand, gender, color, popularity_score DESC, id DESC);
 CREATE UNIQUE INDEX uk_orders_member_idempotency_key ON orders (member_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
+
+-- The date-order CHECK above covers every row. Check the seed window once,
+-- using the creation-time index; a single model legitimately has one timestamp.
+DO $verify_dates$
+DECLARE
+    settings catalog_seed_settings%ROWTYPE;
+    oldest timestamptz;
+    newest timestamptz;
+BEGIN
+    SELECT * INTO STRICT settings FROM catalog_seed_settings;
+    SELECT min(created_at), max(created_at) INTO oldest, newest FROM products;
+    IF oldest IS NULL OR oldest < settings.as_of - INTERVAL '365 days'
+       OR newest >= settings.as_of OR (settings.product_count > 4 AND oldest = newest) THEN
+        RAISE EXCEPTION 'Invalid seed date range: oldest=%, newest=%, as_of=%', oldest, newest, settings.as_of;
+    END IF;
+END;
+$verify_dates$;
 
 ANALYZE members;
 ANALYZE products;

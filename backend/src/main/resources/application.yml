@@ -63,7 +63,8 @@ marketengine:
       # Step 2: create products index + mapping if missing (tests disable this).
       ensure-on-startup: true
     reindex:
-      # Step 3: used by profile "reindex" (scripts/elasticsearch/run-reindex-products.ps1).
+      # 0 runs inline; 1..8 allow the reader to overlap Elasticsearch bulk writes.
+      workers: 1
       batch-size: 5000
       log-every-batches: 20
 

@@ -11,7 +11,3 @@ marketengine:
   cache:
     redis:
       enabled: false
-  elasticsearch:
-    reindex:
-      batch-size: 5000
-      log-every-batches: 20

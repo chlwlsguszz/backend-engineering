@@ -31,7 +31,7 @@
     `pg_trgm` 역색인 인덱스와 `word_similarity` 함수로 오타 및 유사도 검색 속도를 5000ms에서 0.8ms로 단축했습니다.
     
 - RDBMS 환경의 힙 스캔 병목 한계 극복을 위해 ElasticSearch 마이그레이션을 단행했습니다.
-- JDBC 배치를 활용해 1,000만 건의 데이터를 28분 만에 초기 적재(Reindex)했습니다.
+- 기존 실험에서는 PostgreSQL에서 상품을 ID 순으로 나눠 읽고 Elasticsearch에 일괄 저장하여 1,000만 건을 28분에 초기 색인했습니다. 현재 구현은 같은 배치 크기에서 순차 처리와 병렬 처리 시간을 비교할 수 있습니다.
 
 ### 2. Redis 다중 캐싱을 통한 검색 부하 분산
 
@@ -84,9 +84,9 @@
 - Backend API: `http://localhost:8080`
 - Swagger UI: `http://localhost:8080/swagger-ui.html`
 
-## 검색·주문 공용 더미 데이터
+## 검색과 주문의 공용 더미 데이터
 
-빈 DB의 최초 기동 시 Flyway가 [B7 카탈로그 시드](backend/src/main/resources/db/migration/B7__unified_commerce_catalog.sql)를 적용합니다. 기본 구성은 상품 1,000만 개, 회원 50명, 예시 주문 2,000건입니다. 주문은 같은 카탈로그의 실제 상품 ID와 단가를 참조합니다. 시드의 재고는 과거 판매·취소·입고를 반영했다고 가정한 기준 시점의 가용 수량입니다.
+빈 DB의 최초 기동 시 Flyway가 [V8 초기화 SQL](backend/src/main/resources/db/migration/V8__initialize_commerce_catalog.sql) 하나로 스키마와 카탈로그를 생성합니다. 기본 구성은 상품 1,000만 개, 회원 50명, 예시 주문 2,000건입니다. 주문은 같은 카탈로그의 상품 ID와 단가를 참조합니다. 시드 재고는 기준 시점의 가용 수량입니다.
 
 - 한 모델은 브랜드·품목·가격이 같은 색상별 SKU를 최대 4개 가집니다. 상품명에는 브랜드, 품목, 모델 코드와 색상이 들어갑니다. 상품이 13개 이상인 카탈로그에서 `ME0000001`은 4개, `StudioCapsule`은 13개, `ME0000000`은 0개가 기대값입니다.
 - 브랜드별 상품 비중과 주력 카테고리, 품목별 가격대를 다르게 정의했습니다. 이 분포는 실험용 가정입니다. 생성일은 기준 시점 이전 365일에 걸쳐 배정하고 수정일은 생성일과 기준 시점 사이에 둡니다. 이 데이터에서 `ACTIVE` 상품은 가용 재고가 양수이며 품절·판매중단 상품의 가용 재고는 0입니다.
@@ -97,7 +97,36 @@ $env:CATALOG_PRODUCT_COUNT = '100000'
 $env:CATALOG_AS_OF = '2026-01-01T00:00:00Z'
 ```
 
-기존 Flyway 이력이 있는 볼륨은 기존 V 마이그레이션 경로를 따릅니다. 재기동하거나 수량 설정을 바꿔도 기존 상품을 덮어쓰지 않습니다. 새 분포와 기존 데이터를 비교할 때는 별도의 빈 PostgreSQL 볼륨을 사용하고, 이후 ES·Redis도 같은 카탈로그에 맞는 별도 인스턴스 또는 네임스페이스를 사용해야 합니다.
+### 기존 개발 환경에서 V8로 전환
+
+V8은 새 DB에서 시작하는 초기 버전입니다. 이전 Flyway 이력이 있는 DB는 V8 백엔드에 직접 연결할 수 없습니다. Compose의 새 기본 프로젝트 이름은 `marketengine-catalog`입니다. 이전 프로젝트가 같은 포트를 점유하고 있으면 처음 한 번 아래 순서로 전환합니다. 첫 명령은 기존 컨테이너만 중지하므로 이전 데이터 볼륨은 보관됩니다. 다른 프로젝트 이름을 사용했다면 `backend-engineering` 자리에 실제 이름을 사용하세요.
+
+```powershell
+docker compose -p backend-engineering stop
+$env:COMPOSE_PROJECT_NAME = 'marketengine-catalog'
+docker compose up -d --build
+docker compose logs -f backend
+```
+
+백엔드 기동 완료를 확인하면 `Ctrl+C`로 로그 보기만 종료합니다. 이전 버전에서 로컬 Gradle 빌드를 사용했다면 프로젝트 루트에서 `.\backend\gradlew.bat -p backend clean`으로 예전 SQL 빌드 복사본을 정리한 뒤, 아래 재색인 스크립트로 새 ES 인덱스를 채웁니다. 이전 DB에서 내보낸 `order-targets.json`도 새 DB에서 다시 추출합니다. 상품 수와 기준 시각은 최초 기동 전에 정합니다. 같은 볼륨을 재기동하면 Flyway는 V8 시드를 다시 실행하지 않습니다.
+
+### Elasticsearch 재색인 비교
+
+[재색인 스크립트](scripts/elasticsearch/run-reindex-products.ps1)는 PostgreSQL `products`의 모든 상품을 ID 순으로 읽어 Elasticsearch의 `products` 인덱스에 같은 ID로 저장합니다. `-RecreateIndex`는 검색 API가 사용하는 해당 인덱스를 삭제하고 매핑부터 다시 만듭니다. 비교에는 검색 트래픽이 없는 환경을 사용하고, 마지막 검증까지 상품 등록과 수정, 삭제, 주문에 의한 재고 변경을 멈춰 원본을 고정합니다.
+
+아래 PowerShell 명령은 배치당 5,000건으로 고정하고 작업자 수만 바꿉니다. `0`은 DB 읽기와 ES 쓰기를 순차로 실행하는 기준값입니다. `1`은 다음 배치를 읽는 동안 직전 배치를 ES에 쓰며, `2`, `4`, `8`은 동시에 ES에 쓰는 작업자를 늘립니다. 인수를 생략하면 Spring 설정을 사용하며 기본값은 작업자 1개와 배치당 5,000건입니다.
+
+```powershell
+foreach ($workers in 0, 1, 2, 4, 8) {
+    .\scripts\elasticsearch\run-reindex-products.ps1 -RecreateIndex -Workers $workers -BatchSize 5000
+    if ($LASTEXITCODE -ne 0) { throw "재색인 실패 (workers=$workers)" }
+}
+```
+
+- **시간 비교** 같은 DB와 서버 자원으로 예열한 뒤 실행 순서를 바꾸어 반복합니다. 인덱스를 재생성한 뒤에도 PostgreSQL과 운영체제의 읽기 캐시가 남을 수 있습니다. 최초 실행과 예열 후 실행을 구분해 전체 경과 시간과 초당 문서 수를 기록합니다.
+- **병목 확인** 재색인 로그의 DB 조회 및 행 매핑 누적 시간, ES bulk 요청 누적 시간, 마지막 refresh 시간, 전체 경과 시간을 비교합니다. 작업자들이 보낸 요청은 동시에 진행될 수 있어 누적 시간의 합은 전체 경과 시간을 초과할 수 있습니다. 작업자를 늘렸을 때 실제 완료 시간이 줄었는지는 동일 조건의 측정으로 판단합니다.
+- **결과 확인** 재색인은 원본 건수와 성공한 문서 수를 대조하고 최종 refresh 후 같은 ES 연결에서 문서 수(`targetDocuments`)를 읽습니다. 재생성한 인덱스의 건수가 다르면 작업이 실패합니다. 기존 인덱스에 추가 문서가 있으면 경고를 기록합니다. 내용 검증은 몇 개의 실제 상품 ID에 대해 `GET /products/_doc/{id}`의 상품명, 가격, 재고를 PostgreSQL과 대조합니다.
+- **중단 후 재실행** 실패 직전까지 저장된 배치가 대상 인덱스에 남을 수 있습니다. 원본을 고정한 상태에서 `-RecreateIndex`로 처음부터 다시 적재하고 검증합니다. 옵션을 생략하면 같은 ID의 문서를 갱신하며, 현재 DB에 없는 과거 문서는 인덱스에 남을 수 있습니다.
 
 ### 기존 상품에서 주문 대상 추출
 
