@@ -1,7 +1,7 @@
 package com.marketengine.backend.product.application;
 
 /**
- * Fixed Redis cache key for a product list feed plus its search parameters.
+ * Canonical Redis key and the original parameters to execute on a cache miss.
  */
 public record ProductListFeedKey(
         String value,

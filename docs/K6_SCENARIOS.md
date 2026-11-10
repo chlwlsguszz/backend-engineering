@@ -53,7 +53,13 @@ k6 run -e CASE=feed scripts/k6/search_scenarios.js
 
 각 측정 직전과 직후에 아래 카운터를 읽고 차이를 기록한다. Redis 수치는 인스턴스 전체, ES의 `query_total`은 샤드 단위 누적값이다. 같은 환경에 다른 트래픽이 섞이면 수치 차이를 이 실험에만 귀속할 수 없다. 캐시를 우회하는 요청은 Redis 미적중 카운터에도 들어가지 않는다.
 
-현재 피드 키의 TTL은 기본 30~60초다. 예열한 키도 측정 도중 만료될 수 있으므로 결과에 TTL 설정을 함께 기록한다. 캐시를 켠 실험 DB에서 최신순 첫 페이지를 조회한 직후 `docker compose exec -T redis redis-cli PTTL 'productListFeed:v2::feed:home:latest:0'`로 남은 시간을 밀리초 단위로 확인할 수 있다. 상품 수정의 영향을 확인하려면, 양수인 키의 TTL을 기록하고 다른 상품 하나를 수정한 직후 피드를 다시 조회하기 전에 같은 키를 확인한다. 자연 만료 전이라면 키는 남아 있고 TTL은 경과한 만큼 줄어든다.
+현재 피드 키의 TTL은 기본 30~60초다. 예열한 키도 측정 도중 만료될 수 있으므로 결과에 TTL 설정을 함께 기록한다. 캐시를 켠 실험 DB에서 필터 없이 최신순 첫 페이지(`page=0`, `size=12`)를 조회한 직후 아래 한 줄로 남은 시간을 밀리초 단위로 확인한다.
+
+```powershell
+docker compose exec -T redis redis-cli PTTL 'productListFeed:v2::feed:q1?cat=&brand=&gender=&color=&min=&max=&kw=&sort=LATEST&page=0&size=12'
+```
+
+상품 수정의 영향을 확인하려면, 양수인 키의 TTL을 기록하고 다른 상품 하나를 수정한 직후 피드를 다시 조회하기 전에 같은 키를 확인한다. 자연 만료 전이라면 키는 남아 있고 TTL은 경과한 만큼 줄어든다.
 
 ```powershell
 docker compose exec -T redis redis-cli INFO stats | Select-String 'keyspace_hits|keyspace_misses'

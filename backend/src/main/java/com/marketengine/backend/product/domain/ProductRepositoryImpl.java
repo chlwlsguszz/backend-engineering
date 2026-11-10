@@ -2,7 +2,6 @@ package com.marketengine.backend.product.domain;
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Locale;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
@@ -17,8 +16,6 @@ import com.querydsl.jpa.impl.JPAQueryFactory;
 import jakarta.persistence.EntityManager;
 
 public class ProductRepositoryImpl implements ProductQueryRepository {
-
-    private static final int KEYWORD_MIN_LENGTH = 2;
 
     private final JPAQueryFactory queryFactory;
 
@@ -79,15 +76,8 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
     }
 
     private BooleanExpression keywordContains(String keyword) {
-        if (!hasText(keyword)) {
-            return null;
-        }
-        String[] tokens = keyword.trim().toLowerCase(Locale.ROOT).split("\\s+");
         BooleanExpression combined = null;
-        for (String token : tokens) {
-            if (token.length() < KEYWORD_MIN_LENGTH) {
-                continue;
-            }
+        for (String token : ProductSearchKeywords.tokens(keyword)) {
             BooleanExpression tokenMatch = keywordTokenMatch(token);
             combined = combined == null ? tokenMatch : combined.and(tokenMatch);
         }

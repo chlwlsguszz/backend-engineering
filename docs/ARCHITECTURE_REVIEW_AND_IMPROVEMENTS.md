@@ -39,11 +39,14 @@
 ---
 
 ### 🤔 1.2 [과설계 & 벤치마크 맞춤형 하드코딩] `ProductListFeedKeyResolver`
+
+**반영 상태** 아래 내용은 변경 전 진단이다. 현재는 첫 세 페이지에서 모든 필터 조합에 공통 키 형식을 적용한다. [변경 기록](IMPROVEMENT_LOG.md#필터-조합별-분기를-공통-캐시-키로-교체)
+
 - **관련 코드**: `ProductListFeedKeyResolver.resolve()`
 - **현상**:
   - 약 200줄에 달하는 `if` 분기문으로 **특정 11가지 필터 조합만 캐시 키를 생성**하고, 나머지 조합은 `Optional.empty()`를 반환하여 캐시를 타지 못하게 막아두었습니다.
 - **문제점**:
-  1. **테스트 스크립트(`search_v3.js`)와의 과적합(Overfitting)**: 허용된 11가지 조합이 `search_v3.js`의 `COMPLEX_PROFILES`와 1:1로 일치합니다. 반면 실제 유저가 자주 쓸 법한 `category + minPrice`(키워드 없음)나 `brand + color` 조합은 캐시가 전혀 적용되지 않습니다.
+  1. `search_v3.js`의 복합 필터 시나리오는 당시 허용된 조합을 사용했다. 같은 페이지에서 `category + minPrice`(키워드 없음)나 `brand + color`로 조회하면 캐시를 우회했다.
   2. **키워드 정규화 누락**: `segment(keyword)`가 단순 `trim()`만 수행하고 대소문자 변환(`toLowerCase()`)이나 다중 공백 제거를 하지 않아, `"Nike"`와 `"nike"`가 ES에서는 동일한 검색임에도 Redis에는 별도 키로 중복 적재됩니다.
 - **개선 방안**:
   - `size == 12 && page <= 2` 조건만 유지하되, 복잡한 분기문을 제거하고 모든 필터 파라미터를 정규화한 **단일 표준 키 포맷**으로 통합합니다.
@@ -207,7 +210,7 @@
 ## 7. 우선순위별 개선 로드맵 (Action Items)
 
 ### 🔥 Priority 1: 코드 결함 및 과설계 즉시 수정 (가성비 최고 / 면접 방어 필수)
-- [ ] `ProductListFeedKeyResolver`의 11개 하드코딩 분기문을 **범용 정규화 키 생성 로직**으로 단순화 (키워드 소문자 정규화 포함)
+- [x] `ProductListFeedKeyResolver`의 필터 조합별 분기를 제거하고 검색 의미에 맞춰 정규화한 공통 키 적용
 - [x] `ProductService`에서 상품 변경 시 피드 캐시 전체 삭제를 제거하고 항목별 TTL 적용
 - [ ] `ProductDocument.id`에 `@Field(type = FieldType.Long)` 명시 및 `ElasticsearchProductListSearcher` 키워드 검색에 `fuzziness` 옵션 추가
 - [ ] `OrderService`의 `memberRepository.findById()`를 `OrderCreateExecutor` 트랜잭션 내부로 이동 및 `isIdempotencyKeyViolation` 제약조건 판별 정교화

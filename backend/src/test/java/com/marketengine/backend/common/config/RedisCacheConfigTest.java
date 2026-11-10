@@ -25,7 +25,7 @@ class RedisCacheConfigTest {
 
         assertThat(ttl).isNotInstanceOf(FixedDurationTtlFunction.class);
         for (int i = 0; i < 64; i++) {
-            assertThat(ttl.getTimeToLive("feed:home:latest:0", null))
+            assertThat(ttl.getTimeToLive("test-feed-key", null))
                     .isBetween(Duration.ofSeconds(30), maximum);
         }
     }
@@ -35,7 +35,7 @@ class RedisCacheConfigTest {
         Duration minimum = Duration.ofMillis(1);
         TtlFunction ttl = config.productListFeedCacheConfiguration(minimum).getTtlFunction();
 
-        assertThat(ttl.getTimeToLive("feed:home:latest:0", null)).isEqualTo(minimum);
+        assertThat(ttl.getTimeToLive("test-feed-key", null)).isEqualTo(minimum);
     }
 
     @Test

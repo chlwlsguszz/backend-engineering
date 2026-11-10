@@ -2,7 +2,6 @@ package com.marketengine.backend.product.infrastructure.search;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.domain.PageRequest;
@@ -18,6 +17,7 @@ import org.springframework.stereotype.Component;
 import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
 import com.marketengine.backend.product.application.ProductListSearcher;
 import com.marketengine.backend.product.domain.ProductCategory;
+import com.marketengine.backend.product.domain.ProductSearchKeywords;
 
 import co.elastic.clients.elasticsearch._types.SortOptions;
 import co.elastic.clients.elasticsearch._types.SortOrder;
@@ -32,8 +32,6 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 @ConditionalOnProperty(prefix = "marketengine.search", name = "backend", havingValue = "elasticsearch", matchIfMissing = true)
 public class ElasticsearchProductListSearcher implements ProductListSearcher {
-
-    private static final int KEYWORD_MIN_LENGTH = 2;
 
     private final ElasticsearchOperations elasticsearchOperations;
 
@@ -110,14 +108,7 @@ public class ElasticsearchProductListSearcher implements ProductListSearcher {
     }
 
     private static void appendKeywordMust(BoolQuery.Builder bool, String keyword) {
-        if (!hasText(keyword)) {
-            return;
-        }
-        String[] tokens = keyword.trim().toLowerCase(Locale.ROOT).split("\\s+");
-        for (String token : tokens) {
-            if (token.length() < KEYWORD_MIN_LENGTH) {
-                continue;
-            }
+        for (String token : ProductSearchKeywords.tokens(keyword)) {
             bool.must(must -> must.match(match -> match.field("name").query(token)));
         }
     }
