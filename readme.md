@@ -2,6 +2,8 @@
 
 Java 21과 Spring Boot 기반의 단일 SKU 주문 및 상품 검색 포트폴리오다. PostgreSQL 16이 주문과 재고의 원본이고 Elasticsearch 8.17은 검색용 복제본이다. Next.js 화면에서 검색, 주문, 재시도를 검증하고 k6로 부하를 생성한다. [프로젝트 계획과 검증 현황](docs/PLAN.md)
 
+[포트폴리오 읽기](docs/PORTFOLIO.md) / [제출용 PDF](output/pdf/market-engine-portfolio.pdf)
+
 ## 구현과 측정 결과
 
 - **주문과 재고.** 주문 생성은 회원과 멱등성 키를 확인한 뒤 같은 트랜잭션에서 재고를 조건부 차감하고 단가를 받아 주문과 Outbox를 저장한다. 수량 수정은 점유량 차이만 반영하고 취소는 한 번만 재고를 복원한다. 최초 요청 수량을 보존해 수정 또는 취소 후에도 동일한 POST를 재시도할 수 있다. 상품 관리 PUT은 상세의 최신 `version`을 요구한다. [주문 실행](backend/src/main/java/com/marketengine/backend/order/application/OrderCreateExecutor.java)
