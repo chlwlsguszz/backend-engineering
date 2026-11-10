@@ -7,7 +7,8 @@ spring:
   flyway:
     placeholders:
       catalogProductCount: ${CATALOG_PRODUCT_COUNT:10000000}
-      catalogAsOf: ${CATALOG_AS_OF:now}
+      catalogAsOf: ${CATALOG_AS_OF:2026-11-01T00:00:00Z}
+      catalogSeed: ${CATALOG_SEED:42}
 
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/marketengine}

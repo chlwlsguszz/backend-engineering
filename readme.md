@@ -86,29 +86,59 @@
 
 ## 검색과 주문의 공용 더미 데이터
 
-빈 DB의 최초 기동 시 Flyway가 [V8 초기화 SQL](backend/src/main/resources/db/migration/V8__initialize_commerce_catalog.sql) 하나로 스키마와 카탈로그를 생성합니다. 기본 구성은 상품 1,000만 개, 회원 50명, 예시 주문 2,000건입니다. 주문은 같은 카탈로그의 상품 ID와 단가를 참조합니다. 시드 재고는 기준 시점의 가용 수량입니다.
+새 DB의 기본 실험 규모는 **SKU 10,000,000개, 모델 2,500,000개, 회원 100,000명**입니다. 주문 수는 수요와 가용 재고에 따라 결정됩니다. [B9 카탈로그 생성 SQL](backend/src/main/resources/db/migration/B9__realistic_commerce_catalog.sql)
 
-- 한 모델은 브랜드·품목·가격이 같은 색상별 SKU를 최대 4개 가집니다. 상품명에는 브랜드, 품목, 모델 코드와 색상이 들어갑니다. 상품이 13개 이상인 카탈로그에서 `ME0000001`은 4개, `StudioCapsule`은 13개, `ME0000000`은 0개가 기대값입니다.
-- 브랜드별 상품 비중과 주력 카테고리, 품목별 가격대를 다르게 정의했습니다. 이 분포는 실험용 가정입니다. 생성일은 기준 시점 이전 365일에 걸쳐 배정하고 수정일은 생성일과 기준 시점 사이에 둡니다. 이 데이터에서 `ACTIVE` 상품은 가용 재고가 양수이며 품절·판매중단 상품의 가용 재고는 0입니다.
-- 새 DB에 사용할 수량은 `CATALOG_PRODUCT_COUNT`(1~10,000,000), 기준 시각은 `CATALOG_AS_OF`(기본값은 적재 트랜잭션 시작 시각)로 정합니다. 예를 들어 PowerShell에서 아래와 같이 지정한 뒤 해당 셸에서 기동하면 됩니다. 같은 PostgreSQL 16, 생성 규칙, 기준 시각을 쓰면 수량을 늘려도 기존 SKU의 속성을 재현할 수 있습니다.
+### 1,000만 건 환경
 
-```powershell
-$env:CATALOG_PRODUCT_COUNT = '100000'
-$env:CATALOG_AS_OF = '2026-01-01T00:00:00Z'
-```
-
-### 기존 개발 환경에서 V8로 전환
-
-V8은 새 DB에서 시작하는 초기 버전입니다. 이전 Flyway 이력이 있는 DB는 V8 백엔드에 직접 연결할 수 없습니다. Compose의 새 기본 프로젝트 이름은 `marketengine-catalog`입니다. 이전 프로젝트가 같은 포트를 점유하고 있으면 처음 한 번 아래 순서로 전환합니다. 첫 명령은 기존 컨테이너만 중지하므로 이전 데이터 볼륨은 보관됩니다. 다른 프로젝트 이름을 사용했다면 `backend-engineering` 자리에 실제 이름을 사용하세요.
+PowerShell에서 파일럿에 사용했던 설정을 아래 값으로 바꿉니다. 파일럿이 실행 중이면 `docker compose -p marketengine-catalog-pilot stop`으로 포트를 비웁니다. 검증한 시드와 기준 시각은 두 환경에서 같습니다.
 
 ```powershell
-docker compose -p backend-engineering stop
-$env:COMPOSE_PROJECT_NAME = 'marketengine-catalog'
-docker compose up -d --build
+$env:COMPOSE_PROJECT_NAME = 'marketengine-catalog-10m'
+$env:CATALOG_PRODUCT_COUNT = '10000000'
+$env:CATALOG_SEED = '42'
+$env:CATALOG_AS_OF = '2026-11-01T00:00:00Z'
+docker compose up -d --build backend
 docker compose logs -f backend
 ```
 
-백엔드 기동 완료를 확인하면 `Ctrl+C`로 로그 보기만 종료합니다. 이전 버전에서 로컬 Gradle 빌드를 사용했다면 프로젝트 루트에서 `.\backend\gradlew.bat -p backend clean`으로 예전 SQL 빌드 복사본을 정리한 뒤, 아래 재색인 스크립트로 새 ES 인덱스를 채웁니다. 이전 DB에서 내보낸 `order-targets.json`도 새 DB에서 다시 추출합니다. 상품 수와 기준 시각은 최초 기동 전에 정합니다. 같은 볼륨을 재기동하면 Flyway는 V8 시드를 다시 실행하지 않습니다.
+빈 프로젝트 볼륨에서 처음 실행하면 B9가 1,000만 건을 생성합니다. 이미 생성한 환경은 기존 데이터를 사용합니다. 백엔드 시작이 완료된 뒤 같은 PowerShell 창에서 `.\scripts\sql\run-check-catalog-distribution.ps1`을 실행하면 DB의 실제 건수와 재고를 확인할 수 있습니다.
+
+### 10만 건 파일럿 생성
+
+Windows PowerShell에서 프로젝트 루트를 기준으로 실행합니다. 1,000만 건 환경이 실행 중이면 먼저 `docker compose -p marketengine-catalog-10m stop`으로 포트를 비웁니다. 아래 프로젝트 이름을 처음 사용할 때 별도 볼륨이 생성됩니다.
+
+```powershell
+$dockerBin = Split-Path -Parent (Get-Command docker.exe -CommandType Application | Select-Object -First 1 -ExpandProperty Path)
+$env:Path = "$dockerBin;$env:Path"
+if (($env:PATHEXT -split ';') -notcontains '.EXE') { $env:PATHEXT = ".EXE;$env:PATHEXT" }
+docker compose -p marketengine-catalog stop
+$env:COMPOSE_PROJECT_NAME = 'marketengine-catalog-pilot'
+$env:CATALOG_PRODUCT_COUNT = '100000'
+$env:CATALOG_SEED = '42'
+$env:CATALOG_AS_OF = '2026-11-01T00:00:00Z'
+docker compose up -d --build backend
+docker compose logs -f backend
+```
+
+`Started BackendApplication`을 확인하면 `Ctrl+C`로 로그 보기를 끝냅니다. 같은 창에서 **상품 수정이나 주문 생성 전에** 스냅샷을 검증합니다.
+
+```powershell
+.\scripts\sql\run-check-catalog-distribution.ps1
+```
+
+[읽기 전용 검증 SQL](scripts/sql/check_catalog_distribution.sql)은 하나의 DB 스냅샷에서 SKU 수, 브랜드군과 카테고리별 색상 비율, 라인업 크기, 모델별 옵션 수, 출시 월, 수요 구간별 실제 판매량을 출력합니다. 수량, 날짜, 주문 금액, 중복 색상, 라인업 소유 브랜드 또는 재고 대사에 오류가 있으면 비정상 종료합니다. 성공 메시지는 `Catalog seed checks passed.`입니다. 이 단계는 PostgreSQL에서 완료할 수 있습니다.
+
+### 데이터 생성 규칙
+
+- **상품과 라인업.** 대형, 중형, 소형 브랜드의 비중과 브랜드별 주력 카테고리를 다르게 정했습니다. 상시 라인업은 여러 모델이 공유하고, 한정 드롭과 도시 컬렉션은 더 적은 모델이 공유합니다. 모델마다 색상 옵션을 1~7개 배정합니다. 품목과 라인업에 따라 다른 가중치로 중복 없이 뽑아 기본 의류와 트레일 라인의 색상 분포가 달라집니다.
+- **날짜.** 모델 출시일은 기준 시각 전 365일에 분포합니다. 시즌 라인은 특정 주에 집중되며 같은 한정 컬렉션은 출시 주를 공유합니다. 회원 가입과 상품 출시 후에 주문을 생성합니다.
+- **수요와 재고.** 모델과 옵션의 수요 점수(1~100)가 구매 확률, 주문 수량, 인기순 점수에 반영됩니다. 일반 상품은 한정판보다 기초 가용 재고가 많고 인기 일반 상품은 입고 확률도 높습니다. 재고를 먼저 정하고 가능한 수량만 주문에 배정합니다. 각 SKU에서 `기초 가용 재고 + 누적 입고 − CREATED 및 CONFIRMED 주문 수량 = 현재 가용 재고`가 성립해야 합니다. 취소 주문의 순차감은 0입니다. 입고량은 시드 기간의 누적 공급으로 취급하며 개별 입고 시각은 모델링하지 않습니다.
+- **재현.** PostgreSQL 16에서 같은 생성기 버전, 시드, 기준 시각과 건수를 지정하면 같은 데이터가 생성됩니다. 이 값은 `catalog_seed_run`, SKU별 기초 재고와 입고량은 `catalog_seed_inventory`에서 확인합니다. 분포는 실험을 위한 가정입니다. DTO와 검색 API에는 기존 상품 필드를 사용합니다.
+- **규모 확대.** `CATALOG_PRODUCT_COUNT`는 1~10,000,000입니다. 10만 건 결과를 검토한 뒤 1천만 건은 별도의 빈 Compose 프로젝트에서 생성합니다. 이미 사용한 볼륨의 환경 변수만 변경해도 Flyway는 시드를 다시 실행하지 않습니다. 비교에 사용하는 ES와 Redis도 해당 프로젝트의 것을 사용합니다.
+
+### 확인용 사례
+
+10만 건과 1,000만 건 환경 모두 상품명 토큰 기준 `Drop000001`은 32건, `City000001`은 128건, `ME0000001`은 4건, `ME0000000`은 0건이 기대값입니다. `StudioCapsule`은 첫 13개 SKU의 컬렉션으로, 페이지 크기 12의 경계 검증에 사용합니다. SKU 1은 재고 120개, SKU 2는 1개, SKU 3은 0개입니다. SKU 1에는 취소 주문도 있어 재고 대사에서 취소 수량을 잘못 차감하는 경우를 잡을 수 있습니다.
 
 ### Elasticsearch 재색인 비교
 
