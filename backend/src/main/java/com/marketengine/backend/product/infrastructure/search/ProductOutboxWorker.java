@@ -2,6 +2,8 @@ package com.marketengine.backend.product.infrastructure.search;
 
 import java.util.HashSet;
 import java.util.List;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -27,15 +29,19 @@ public class ProductOutboxWorker {
     private final ProductOutboxPublisher publisher;
     private final ApplicationAvailability availability;
     private final int batchSize;
+    private final Counter published;
+    private final Counter failed;
 
     public ProductOutboxWorker(ProductSearchOutbox outbox, ProductOutboxPublisher publisher,
-                               ApplicationAvailability availability,
+                               ApplicationAvailability availability, MeterRegistry registry,
                                @Value("${marketengine.elasticsearch.outbox.batch-size:500}") int batchSize) {
         Assert.isTrue(batchSize > 0, "Outbox batch size must be positive");
         this.outbox = outbox;
         this.publisher = publisher;
         this.availability = availability;
         this.batchSize = batchSize;
+        this.published = registry.counter("product.outbox.publications", "outcome", "success");
+        this.failed = registry.counter("product.outbox.publications", "outcome", "failure");
     }
 
     @Scheduled(fixedDelayString = "${marketengine.elasticsearch.outbox.poll-delay:250ms}")
@@ -52,15 +58,18 @@ public class ProductOutboxWorker {
         try {
             completed = publisher.publish(claimed);
         } catch (RuntimeException failure) {
+            failed.increment(claimed.size());
             log.warn("Product outbox bulk request failed for {} products", claimed.size(), failure);
             outbox.retry(claimed);
             return;
         }
 
         if (!completed.isEmpty()) {
+            published.increment(completed.size());
             outbox.complete(completed);
         }
         if (completed.size() < claimed.size()) {
+            failed.increment(claimed.size() - completed.size());
             var successes = new HashSet<>(completed);
             outbox.retry(claimed.stream().filter(entry -> !successes.contains(entry)).toList());
         }

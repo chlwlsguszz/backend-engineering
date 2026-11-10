@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: marketengine
       POSTGRES_PASSWORD: marketengine
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U marketengine -d marketengine"]
       interval: 5s
@@ -25,7 +25,7 @@ services:
       xpack.security.enabled: "false"
       ES_JAVA_OPTS: "-Xms${ES_HEAP_SIZE:-512m} -Xmx${ES_HEAP_SIZE:-512m}"
     ports:
-      - "9200:9200"
+      - "127.0.0.1:9200:9200"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
       interval: 10s
@@ -37,7 +37,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "16379:6379"
+      - "127.0.0.1:16379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -50,7 +50,8 @@ services:
       dockerfile: Dockerfile
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/marketengine
-      CATALOG_PRODUCT_COUNT: "${CATALOG_PRODUCT_COUNT:-10000000}"
+      CATALOG_PRODUCT_COUNT: "${CATALOG_PRODUCT_COUNT:-1000}"
+      SPRING_PROFILES_ACTIVE: "${SPRING_PROFILES_ACTIVE:-default}"
       CATALOG_AS_OF: "${CATALOG_AS_OF:-2026-11-01T00:00:00Z}"
       CATALOG_SEED: "${CATALOG_SEED:-42}"
       SPRING_DATASOURCE_USERNAME: marketengine
@@ -66,9 +67,9 @@ services:
       elasticsearch:
         condition: service_healthy
       redis:
-        condition: service_healthy
+        condition: service_started
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
 
   frontend:
     build:
@@ -81,7 +82,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
 
   prometheus:
     image: prom/prometheus:v3.6.0
@@ -96,7 +97,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
 
   grafana:
     image: grafana/grafana:12.1.0
@@ -110,7 +111,7 @@ services:
     depends_on:
       - prometheus
     ports:
-      - "5305:3000"
+      - "127.0.0.1:5305:3000"
 
 volumes:
   marketengine-pgdata:

@@ -6,7 +6,7 @@ spring:
 
   flyway:
     placeholders:
-      catalogProductCount: ${CATALOG_PRODUCT_COUNT:10000000}
+      catalogProductCount: ${CATALOG_PRODUCT_COUNT:1000}
       catalogAsOf: ${CATALOG_AS_OF:2026-11-01T00:00:00Z}
       catalogSeed: ${CATALOG_SEED:42}
 
@@ -35,6 +35,8 @@ spring:
     redis:
       host: ${SPRING_DATA_REDIS_HOST:localhost}
       port: ${SPRING_DATA_REDIS_PORT:16379}
+      connect-timeout: ${SPRING_DATA_REDIS_CONNECT_TIMEOUT:1s}
+      timeout: ${SPRING_DATA_REDIS_TIMEOUT:1s}
 
   cache:
     type: redis
@@ -85,6 +87,9 @@ springdoc:
 
 management:
   metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
     tags:
       application: ${spring.application.name}
   endpoints:

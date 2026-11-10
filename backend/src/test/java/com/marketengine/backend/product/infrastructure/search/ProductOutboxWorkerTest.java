@@ -2,6 +2,7 @@ package com.marketengine.backend.product.infrastructure.search;
 
 import java.util.List;
 import java.util.UUID;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,7 +34,7 @@ class ProductOutboxWorkerTest {
 
     @BeforeEach
     void setUp() {
-        worker = new ProductOutboxWorker(outbox, publisher, availability, 500);
+        worker = new ProductOutboxWorker(outbox, publisher, availability, new SimpleMeterRegistry(), 500);
         when(availability.getReadinessState()).thenReturn(ReadinessState.ACCEPTING_TRAFFIC);
     }
 
