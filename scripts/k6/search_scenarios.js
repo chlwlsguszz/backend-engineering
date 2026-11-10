@@ -8,7 +8,7 @@ const CASE = __ENV.CASE || "feed";
 const isSweep = CASE === "feed-sweep";
 const BASE_URL = (__ENV.BASE_URL || "http://localhost:8080").replace(/\/$/, "");
 const PAGE_SIZE = 12;
-const RATE = integerOption("RATE", isSweep ? 10000 : 5, 1, 10000);
+const RATE = integerOption("RATE", isSweep ? 10000 : 5, 1, 15000);
 const RAMP_SECONDS = integerOption("RAMP_SECONDS", isSweep ? 200 : 0, isSweep ? 1 : 0, 1800);
 const BAND_RPS = isSweep ? integerOption("BAND_RPS", 1000, 1, RATE) : 0;
 const MAX_PAGE = integerOption("MAX_PAGE", 8, 3, 20);
@@ -34,14 +34,48 @@ if (isSweep && (RATE % BAND_RPS !== 0 || RATE / BAND_RPS > 25)) {
 
 const maxVUs = integerOption("MAX_VUS", isSweep ? 2000 : 100, 10, 5000);
 const allocatedVUs = integerOption("PREALLOCATED_VUS", isSweep ? Math.min(100, maxVUs) : 10, 1, maxVUs);
-const holdDuration = __ENV.DURATION || "30s";
+// Windows PowerShell 5.1 writes a UTF-8 BOM in settings.json.
+const sweepSettings = isSweep && __ENV.SWEEP_SETTINGS
+  ? JSON.parse(open(__ENV.SWEEP_SETTINGS).replace(/^\uFEFF/, ""))
+  : null;
+const holdDuration = sweepSettings?.HoldSeconds != null ? `${sweepSettings.HoldSeconds}s` : (__ENV.DURATION || "30s");
+const hasHold = !isSweep || holdDuration !== "0s";
+
+function loadRampPoints() {
+  const rampEndMs = RAMP_SECONDS * 1000;
+  if (!sweepSettings) return [{ EndMs: rampEndMs, TargetRps: RATE }];
+
+  const points = sweepSettings.RampStages;
+  if (!Array.isArray(points) || !points.length || sweepSettings.BandRps !== BAND_RPS) {
+    throw new Error("SWEEP_SETTINGS must contain RampStages and the configured BandRps.");
+  }
+  let previousMs = 0;
+  let previousRps = 0;
+  for (const point of points) {
+    if (!point || !Number.isSafeInteger(point.EndMs) || point.EndMs <= previousMs ||
+        !Number.isSafeInteger(point.TargetRps) || point.TargetRps <= previousRps) {
+      throw new Error("Each ramp stage must increase both EndMs and TargetRps.");
+    }
+    previousMs = point.EndMs;
+    previousRps = point.TargetRps;
+  }
+  if (previousMs !== rampEndMs || previousRps !== RATE) {
+    throw new Error("The final ramp stage must match RAMP_SECONDS and RATE.");
+  }
+  return points;
+}
+
+const rampPoints = loadRampPoints();
 const schedule = RAMP_SECONDS > 0
   ? {
       executor: "ramping-arrival-rate",
       startRate: isSweep ? 0 : Math.min(50, RATE),
       stages: [
-        { duration: `${RAMP_SECONDS}s`, target: RATE },
-        { duration: holdDuration, target: RATE },
+        ...rampPoints.map((point, index) => ({
+          duration: `${point.EndMs - (index === 0 ? 0 : rampPoints[index - 1].EndMs)}ms`,
+          target: point.TargetRps,
+        })),
+        ...(hasHold ? [{ duration: holdDuration, target: RATE }] : []),
       ],
     }
   : { executor: "constant-arrival-rate", rate: RATE, duration: holdDuration };
@@ -59,7 +93,8 @@ if (isSweep) {
   const metrics = [
     "http_reqs", "http_req_duration", "http_req_failed", "checks", "sweep_initialized_vus", "sweep_active_vus",
   ];
-  const bands = Array.from({ length: RATE / BAND_RPS }, (_, i) => `b${i}`).concat("hold");
+  const bands = Array.from({ length: RATE / BAND_RPS }, (_, i) => `b${i}`);
+  if (hasHold) bands.push("hold");
   for (const band of bands) {
     for (const metric of metrics) thresholds[`${metric}{band:${band}}`] = [];
   }
@@ -128,9 +163,23 @@ const initializedVUs = isSweep ? new Gauge("sweep_initialized_vus") : null;
 const activeVUs = isSweep ? new Gauge("sweep_active_vus") : null;
 let lastSampledBand;
 
+function sweepBandAt(elapsedMs) {
+  let startMs = 0;
+  let startRps = 0;
+  for (const point of rampPoints) {
+    if (elapsedMs < point.EndMs) {
+      const currentRps = startRps + (elapsedMs - startMs) * (point.TargetRps - startRps) / (point.EndMs - startMs);
+      return `b${Math.floor(currentRps / BAND_RPS)}`;
+    }
+    startMs = point.EndMs;
+    startRps = point.TargetRps;
+  }
+  // An iteration dispatched just before shutdown can enter JS at the final boundary.
+  return hasHold ? "hold" : `b${RATE / BAND_RPS - 1}`;
+}
+
 function markSweepBand(elapsedMs) {
-  const rampMs = RAMP_SECONDS * 1000;
-  const band = elapsedMs >= rampMs ? "hold" : `b${Math.floor(elapsedMs * RATE / (rampMs * BAND_RPS))}`;
+  const band = sweepBandAt(elapsedMs);
   exec.vu.metrics.tags.band = band;
   // Sample on each VU's first iteration in a band and periodically thereafter.
   if (lastSampledBand !== band || exec.scenario.iterationInTest % 128 === 0) {

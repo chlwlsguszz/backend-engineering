@@ -1,6 +1,7 @@
 package com.marketengine.backend.common.config;
 
 import java.time.Duration;
+import java.util.concurrent.ThreadLocalRandom;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -13,25 +14,24 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
+import org.springframework.data.redis.cache.RedisCacheWriter;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 
 import com.marketengine.backend.product.api.ProductDtos.ProductPageResponse;
 
-/**
- * Step 1 (cache): Redis-backed Spring Cache. Product list feed caching uses {@link #PRODUCT_LIST_FEED} in a later step.
- */
 @Configuration
 @EnableCaching
 @ConditionalOnProperty(prefix = "marketengine.cache.redis", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class RedisCacheConfig {
 
-    public static final String PRODUCT_LIST_FEED = "productListFeed";
+    // Start a new namespace so entries written with the old 30-minute TTL expire on their own.
+    public static final String PRODUCT_LIST_FEED = "productListFeed:v2";
 
     @Bean
     RedisCacheConfiguration productListFeedCacheConfiguration(
-            @Value("${marketengine.cache.redis.product-list-feed-ttl:2s}") Duration productListFeedTtl
+            @Value("${marketengine.cache.redis.product-list-feed-ttl:60s}") Duration maxTtl
     ) {
         ObjectMapper objectMapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
@@ -41,11 +41,21 @@ public class RedisCacheConfig {
                 new Jackson2JsonRedisSerializer<>(objectMapper, ProductPageResponse.class);
 
         return RedisCacheConfiguration.defaultCacheConfig()
-                .entryTtl(productListFeedTtl)
+                .entryTtl(jitteredTtl(maxTtl))
                 .disableCachingNullValues()
                 .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(
                         valueSerializer
                 ));
+    }
+
+    private static RedisCacheWriter.TtlFunction jitteredTtl(Duration maxTtl) {
+        long maxMillis = maxTtl.toMillis();
+        if (maxMillis < 1) {
+            throw new IllegalArgumentException("product-list-feed-ttl must be at least 1 ms");
+        }
+        // Draw on each cache write. Every entry lives between half the cap (rounded up) and the cap.
+        long jitterBound = maxMillis / 2 + 1;
+        return (key, value) -> Duration.ofMillis(maxMillis - ThreadLocalRandom.current().nextLong(jitterBound));
     }
 
     @Bean

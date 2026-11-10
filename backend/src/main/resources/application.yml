@@ -51,9 +51,9 @@ server:
 marketengine:
   cache:
     redis:
-      # Step 1: Redis + Spring Cache wiring (product list @Cacheable in a later step).
       enabled: true
-      product-list-feed-ttl: 1800s
+      # Maximum lifetime; each feed cache write receives a TTL between 50% and 100% of this value.
+      product-list-feed-ttl: 60s
   search:
     # Step 5: product list API — elasticsearch (default) or postgres (QueryDSL fallback).
     backend: elasticsearch

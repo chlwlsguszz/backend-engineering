@@ -2,7 +2,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Fixed')]
 param(
     [Parameter(ParameterSetName = 'Fixed')]
-    [ValidateRange(1, 10000)]
+    [ValidateRange(1, 15000)]
     [int[]] $Rates = @(100, 250, 500, 1000, 2000, 4000, 7000, 10000),
     [Parameter(ParameterSetName = 'Fixed')]
     [ValidateRange(10, 5000)]
@@ -10,10 +10,10 @@ param(
     [Parameter(Mandatory, ParameterSetName = 'Sweep')]
     [switch] $Sweep,
     [Parameter(ParameterSetName = 'Sweep')]
-    [ValidateRange(1, 10000)]
+    [ValidateRange(1, 15000)]
     [int] $TargetRps = 10000,
     [Parameter(ParameterSetName = 'Sweep')]
-    [ValidateRange(1, 10000)]
+    [ValidateRange(1, 15000)]
     [int] $BandRps = 1000,
     [Parameter(ParameterSetName = 'Sweep')]
     [ValidateRange(1, 5000)]
@@ -29,7 +29,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if ($Sweep) {
-    if (-not $PSBoundParameters.ContainsKey('RampSeconds')) { $RampSeconds = 200 }
+    if (-not $PSBoundParameters.ContainsKey('RampSeconds')) {
+        $RampSeconds = if ($TargetRps -gt 10000) { 60 } else { 200 }
+    }
     if (-not $PSBoundParameters.ContainsKey('Route')) { $Route = 'Direct' }
     if ($RampSeconds -lt 1 -or $InitialVUs -gt $MaxVUs) {
         throw 'Sweep requires a positive RampSeconds and InitialVUs <= MaxVUs.'
@@ -87,23 +89,33 @@ Write-Host 'Warming up: 50 RPS for 10s'
 Invoke-K6Stage -Name 'warmup' -Arguments @('-e', 'RATE=50', '-e', 'DURATION=10s', '/scripts/search_scenarios.js')
 
 if ($Sweep) {
-    $holdSeconds = 30
+    $holdSeconds = if ($TargetRps -gt 10000) { 0 } else { 30 }
+    $rampMs = $RampSeconds * 1000
+    # Both k6 and the report read these same time/rate endpoints from settings.json.
+    $rampStages = @(
+        if ($TargetRps -gt 10000) {
+            [ordered]@{ TargetRps = 10000; EndMs = [int]($rampMs / 2) }
+        }
+        [ordered]@{ TargetRps = $TargetRps; EndMs = $rampMs }
+    )
     $settings = [ordered]@{
         Route = $Route; BaseUrl = $baseUrl; TargetRps = $TargetRps; BandRps = $BandRps
-        RampSeconds = $RampSeconds; HoldSeconds = $holdSeconds; InitialVUs = $InitialVUs; MaxVUs = $MaxVUs
+        RampSeconds = $RampSeconds; RampStages = $rampStages; HoldSeconds = $holdSeconds
+        InitialVUs = $InitialVUs; MaxVUs = $MaxVUs
         P99LimitMs = 200; FailureLimitPct = 0.1
     }
-    $settings | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $results 'settings.json') -Encoding UTF8
-    Write-Host "Sweep: 0 to $TargetRps RPS over ${RampSeconds}s, hold ${holdSeconds}s; VUs $InitialVUs to $MaxVUs"
+    $settings | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $results 'settings.json') -Encoding UTF8
+    $endpoints = $rampStages | ForEach-Object { "$($_.TargetRps) RPS at $($_.EndMs / 1000)s" }
+    Write-Host "Sweep: 0 RPS -> $($endpoints -join ' -> '), hold ${holdSeconds}s; VUs $InitialVUs to $MaxVUs"
     $arguments = @(
         '-e', "RATE=$TargetRps", '-e', "BAND_RPS=$BandRps", '-e', "RAMP_SECONDS=$RampSeconds",
         '-e', "DURATION=${holdSeconds}s", '-e', "PREALLOCATED_VUS=$InitialVUs", '-e', "MAX_VUS=$MaxVUs",
-        '--summary-export=/results/feed-sweep.json', '/scripts/search_scenarios.js'
+        '-e', 'SWEEP_SETTINGS=/results/settings.json', '--summary-export=/results/feed-sweep.json', '/scripts/search_scenarios.js'
     )
     Invoke-K6Stage -Name 'feed-sweep' -Case 'feed-sweep' -Arguments $arguments
     $sweepExitCode = $LASTEXITCODE
     $report = Join-Path $PSScriptRoot 'write-feed-sweep-report.ps1'
-    & $report -SummaryPath (Join-Path $results 'feed-sweep.json') -RampSeconds $RampSeconds -HoldSeconds $holdSeconds -TargetRps $TargetRps -BandRps $BandRps -P99LimitMs $settings.P99LimitMs -FailureLimitPct $settings.FailureLimitPct
+    & $report -SummaryPath (Join-Path $results 'feed-sweep.json')
     Write-Host "Results: $results"
     exit $sweepExitCode
 }

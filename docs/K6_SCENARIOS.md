@@ -53,6 +53,8 @@ k6 run -e CASE=feed scripts/k6/search_scenarios.js
 
 각 측정 직전과 직후에 아래 카운터를 읽고 차이를 기록한다. Redis 수치는 인스턴스 전체, ES의 `query_total`은 샤드 단위 누적값이다. 같은 환경에 다른 트래픽이 섞이면 수치 차이를 이 실험에만 귀속할 수 없다. 캐시를 우회하는 요청은 Redis 미적중 카운터에도 들어가지 않는다.
 
+현재 피드 키의 TTL은 기본 30~60초다. 예열한 키도 측정 도중 만료될 수 있으므로 결과에 TTL 설정을 함께 기록한다. 캐시를 켠 실험 DB에서 최신순 첫 페이지를 조회한 직후 `docker compose exec -T redis redis-cli PTTL 'productListFeed:v2::feed:home:latest:0'`로 남은 시간을 밀리초 단위로 확인할 수 있다. 상품 수정의 영향을 확인하려면, 양수인 키의 TTL을 기록하고 다른 상품 하나를 수정한 직후 피드를 다시 조회하기 전에 같은 키를 확인한다. 자연 만료 전이라면 키는 남아 있고 TTL은 경과한 만큼 줄어든다.
+
 ```powershell
 docker compose exec -T redis redis-cli INFO stats | Select-String 'keyspace_hits|keyspace_misses'
 Invoke-RestMethod 'http://localhost:9200/products/_stats/search?filter_path=_all.total.search.query_total' | ConvertTo-Json -Depth 6
@@ -96,7 +98,15 @@ VU 수는 최초 탐색을 위한 가정이다. 요청을 놓치면 해당 단�
 .\scripts\k6\run-feed-capacity.ps1 -Sweep
 ```
 
-실행 후 콘솔에 표시되는 결과 폴더(`%TEMP%\k6-feed-…-Direct-sweep`)에서 `feed-sweep-report.txt`를 연다. `feed-sweep.csv`에는 1,000 RPS 폭의 10개 구간과 마지막 유지 구간이 한 줄씩 기록된다. 예를 들어 `6000-7000` 행은 목표가 6,000에서 7,000으로 올라가는 20초 동안 **시작한 요청**의 결과다. 목표 평균은 6,500 RPS이고, 관측 요청 수를 20초로 나눈 값이 `ObservedRps`다. `CoveragePct`가 낮으면 발생기가 계획한 부하를 얼마나 전달했는지도 함께 본다. 연결 실패 등 HTTP 실패는 시도한 요청 수를 분모로 계산하고, 시작하지 못한 요청은 전체 `dropped_iterations`로 별도 기록한다.
+**10,000 RPS를 측정한 뒤 15,000 RPS까지 확장할 때**는 아래 명령을 사용한다. 10초간 예열한 다음 0→10,000 RPS와 10,000→15,000 RPS를 각각 30초에 걸쳐 올린다. 15,000 RPS에 도달하면 새 요청을 보내는 일정이 끝난다. 예정 시간은 예열 포함 1분 10초이며, k6 시작과 마지막 응답 대기 시간은 별도다.
+
+```powershell
+.\scripts\k6\run-feed-capacity.ps1 -Sweep -TargetRps 15000
+```
+
+기본 1,000 RPS 폭에서 10,000 아래의 각 구간은 3초, 그 위의 각 구간은 6초다. 보고서는 실행 시 저장한 `settings.json`에서 상승 일정을 읽어 각 구간의 실제 길이로 처리율과 전달 비율을 계산한다. 마지막 행은 14,000→15,000 RPS 상승 구간이다. 본 측정에서 계획한 요청 수는 총 525,000건이다. 이전 10,000 RPS 실험과 준비 VU(100), 최대 VU(2,000), 피드 요청 비중은 같고, 하위 구간은 빠르게 지나가므로 그 구간 p99를 비교할 때는 표본 크기도 확인한다.
+
+실행 후 콘솔에 표시되는 결과 폴더(`%TEMP%\k6-feed-…-Direct-sweep`)에서 `feed-sweep-report.txt`를 연다. `feed-sweep.csv`에는 RPS 구간마다 한 줄이 기록되며, 유지 시간을 지정한 실험에는 유지 구간 행도 표시된다. 예를 들어 기본 10,000 RPS 실험의 `6000-7000` 행은 목표가 6,000에서 7,000으로 올라가는 20초 동안 **시작한 요청**의 결과다. 목표 평균은 6,500 RPS이고, 관측 요청 수를 20초로 나눈 값이 `ObservedRps`다. `CoveragePct`가 낮으면 발생기가 계획한 부하를 얼마나 전달했는지도 함께 본다. 연결 실패 등 HTTP 실패는 시도한 요청 수를 분모로 계산하고, 시작하지 못한 요청은 전체 `dropped_iterations`로 별도 기록한다.
 
 보고서는 p95/p99(ms), HTTP 실패 건수와 실패율, 응답 검사 실패 수, 표본에서 관측한 준비 및 사용 VU 최댓값을 보여준다. 요청 표본이 100건 이상인 구간에서 아래 기준으로 첫 변화 후보를 표시한다.
 

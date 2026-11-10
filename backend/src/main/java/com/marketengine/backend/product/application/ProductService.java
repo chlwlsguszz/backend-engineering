@@ -6,11 +6,9 @@ import org.springframework.data.domain.Slice;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.cache.annotation.CacheEvict;
 
 import com.marketengine.backend.common.exception.BusinessException;
 import com.marketengine.backend.common.exception.ErrorCode;
-import com.marketengine.backend.common.config.RedisCacheConfig;
 import com.marketengine.backend.product.api.ProductDtos.CreateProductRequest;
 import com.marketengine.backend.product.api.ProductDtos.ProductDetailResponse;
 import com.marketengine.backend.product.api.ProductDtos.ProductPageResponse;
@@ -33,7 +31,6 @@ public class ProductService {
     private final ProductListFeedCache productListFeedCache;
 
     @Transactional
-    @CacheEvict(cacheNames = RedisCacheConfig.PRODUCT_LIST_FEED, allEntries = true)
     public ProductDetailResponse create(CreateProductRequest request) {
         Product saved = productRepository.saveAndFlush(
                 new Product(
@@ -81,7 +78,6 @@ public class ProductService {
     }
 
     @Transactional
-    @CacheEvict(cacheNames = RedisCacheConfig.PRODUCT_LIST_FEED, allEntries = true)
     public ProductDetailResponse update(Long productId, UpdateProductRequest request) {
         Product product = findProduct(productId);
         product.changeInfo(
@@ -102,7 +98,6 @@ public class ProductService {
     }
 
     @Transactional
-    @CacheEvict(cacheNames = RedisCacheConfig.PRODUCT_LIST_FEED, allEntries = true)
     public void delete(Long productId) {
         Product product = findProduct(productId);
         productRepository.delete(product);

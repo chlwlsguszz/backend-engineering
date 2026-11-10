@@ -20,6 +20,8 @@
 ## 1. 대용량 검색 및 캐시(Search & Cache) 영역의 설계 결함
 
 ### 🚨 1.1 상품 1개만 변경해도 전체 캐시를 폭파하는 `@CacheEvict(allEntries = true)`
+
+**반영 상태** 아래 내용은 변경 전 진단이다. 현재 구현은 Redis 단일 계층에서 피드 항목을 개별 만료시킨다. [변경 기록](IMPROVEMENT_LOG.md#redis-상품-피드-캐시)
 - **관련 코드**: `ProductService.create()`, `ProductService.update()`, `ProductService.delete()`
 - **현상**:
   ```java
@@ -206,7 +208,7 @@
 
 ### 🔥 Priority 1: 코드 결함 및 과설계 즉시 수정 (가성비 최고 / 면접 방어 필수)
 - [ ] `ProductListFeedKeyResolver`의 11개 하드코딩 분기문을 **범용 정규화 키 생성 로직**으로 단순화 (키워드 소문자 정규화 포함)
-- [ ] `ProductService`의 `@CacheEvict(allEntries = true)` 제거 (Cache Avalanche 방지)
+- [x] `ProductService`에서 상품 변경 시 피드 캐시 전체 삭제를 제거하고 항목별 TTL 적용
 - [ ] `ProductDocument.id`에 `@Field(type = FieldType.Long)` 명시 및 `ElasticsearchProductListSearcher` 키워드 검색에 `fuzziness` 옵션 추가
 - [ ] `OrderService`의 `memberRepository.findById()`를 `OrderCreateExecutor` 트랜잭션 내부로 이동 및 `isIdempotencyKeyViolation` 제약조건 판별 정교화
 - [ ] `OrderService.update/delete` 재고 증감 반영 및 `OrderService.list()` 페이징 적용
