@@ -3,7 +3,10 @@ package com.marketengine.backend.product.application;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -12,8 +15,11 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import com.marketengine.backend.common.exception.BusinessException;
 import com.marketengine.backend.common.exception.ErrorCode;
@@ -23,7 +29,7 @@ import com.marketengine.backend.product.api.ProductDtos.UpdateProductRequest;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductCategory;
 import com.marketengine.backend.product.domain.ProductRepository;
-import com.marketengine.backend.product.infrastructure.search.ProductSearchIndexer;
+import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
 
 @ExtendWith(MockitoExtension.class)
 class ProductServiceTest {
@@ -32,7 +38,7 @@ class ProductServiceTest {
     private ProductRepository productRepository;
 
     @Mock
-    private ProductSearchIndexer productSearchIndexer;
+    private ProductSearchOutbox productSearchOutbox;
 
     @InjectMocks
     private ProductService productService;
@@ -52,15 +58,21 @@ class ProductServiceTest {
                 800
         );
 
-        when(productRepository.saveAndFlush(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(productRepository.saveAndFlush(any(Product.class))).thenAnswer(invocation -> {
+            Product product = invocation.getArgument(0);
+            ReflectionTestUtils.setField(product, "id", 41L);
+            return product;
+        });
 
         ProductDetailResponse response = productService.create(request);
 
         assertThat(response.name()).isEqualTo("keyboard");
         assertThat(response.priceAmount()).isEqualByComparingTo("120.00");
         assertThat(response.stockQuantity()).isEqualTo(10);
-        verify(productRepository).saveAndFlush(any(Product.class));
-        verify(productSearchIndexer).index(any(Product.class));
+        assertThat(response.id()).isEqualTo(41L);
+        InOrder writes = inOrder(productRepository, productSearchOutbox);
+        writes.verify(productRepository).saveAndFlush(any(Product.class));
+        writes.verify(productSearchOutbox).enqueue(41L);
     }
 
     @Test
@@ -109,7 +121,31 @@ class ProductServiceTest {
         assertThat(response.stockQuantity()).isEqualTo(2);
         assertThat(response.category()).isEqualTo(ProductCategory.OUTER);
         assertThat(response.popularityScore()).isEqualTo(500);
-        verify(productRepository).flush();
-        verify(productSearchIndexer).index(product);
+        InOrder writes = inOrder(productRepository, productSearchOutbox);
+        writes.verify(productRepository).flush();
+        writes.verify(productSearchOutbox).enqueue(1L);
+    }
+
+    @Test
+    void delete_enqueuesAfterDeleteWasFlushed() {
+        Product product = mock(Product.class);
+        when(productRepository.findById(7L)).thenReturn(Optional.of(product));
+
+        productService.delete(7L);
+
+        InOrder writes = inOrder(productRepository, productSearchOutbox);
+        writes.verify(productRepository).delete(product);
+        writes.verify(productRepository).flush();
+        writes.verify(productSearchOutbox).enqueue(7L);
+    }
+
+    @Test
+    void delete_doesNotEnqueueWhenForeignKeyPreventsDelete() {
+        when(productRepository.findById(7L)).thenReturn(Optional.of(mock(Product.class)));
+        doThrow(new DataIntegrityViolationException("product has orders")).when(productRepository).flush();
+
+        assertThatThrownBy(() -> productService.delete(7L)).isInstanceOf(DataIntegrityViolationException.class);
+
+        verifyNoInteractions(productSearchOutbox);
     }
 }

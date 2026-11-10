@@ -41,10 +41,11 @@ if ($Sweep) {
     }
 }
 $docker = Get-Command docker.exe -CommandType Application | Select-Object -First 1 -ExpandProperty Path
-$index = Invoke-RestMethod -Uri 'http://localhost:9200/products/_count' -TimeoutSec 15
+$visibleProducts = '{"query":{"bool":{"must_not":[{"term":{"outboxDeleted":true}}]}}}'
+$index = Invoke-RestMethod -Uri 'http://localhost:9200/products/_count' -Method Post -ContentType 'application/json' -Body $visibleProducts -TimeoutSec 15
 $health = Invoke-RestMethod -Uri 'http://localhost:8080/actuator/health' -TimeoutSec 15
 if ($index.count -ne 10000000 -or $health.status -ne 'UP') {
-    throw "Expected 10000000 documents and a healthy backend. Found count=$($index.count), health=$($health.status)."
+    throw "Expected 10000000 searchable products and a healthy backend. Found count=$($index.count), health=$($health.status)."
 }
 
 $baseUrl = 'http://host.docker.internal:8080'

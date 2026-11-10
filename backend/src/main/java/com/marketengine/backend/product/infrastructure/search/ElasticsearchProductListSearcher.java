@@ -81,7 +81,7 @@ public class ElasticsearchProductListSearcher implements ProductListSearcher {
             Integer minPrice,
             Integer maxPrice
     ) {
-        BoolQuery.Builder bool = new BoolQuery.Builder();
+        BoolQuery.Builder bool = ProductDocument.visibleProducts();
 
         appendKeywordMust(bool, keyword);
 

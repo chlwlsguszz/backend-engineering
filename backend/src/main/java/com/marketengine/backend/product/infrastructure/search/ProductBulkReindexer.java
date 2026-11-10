@@ -1,7 +1,6 @@
 package com.marketengine.backend.product.infrastructure.search;
 
 import java.time.Duration;
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
@@ -13,12 +12,11 @@ import java.util.concurrent.TimeUnit;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.IndexOperations;
 import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
-import org.springframework.data.elasticsearch.core.query.Query;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
 
 import lombok.RequiredArgsConstructor;
@@ -43,19 +41,6 @@ public class ProductBulkReindexer {
             ORDER BY id
             LIMIT ?
             """;
-
-    private static final RowMapper<ProductDocument> ROW_MAPPER = (resultSet, rowNum) -> new ProductDocument(
-            resultSet.getLong("id"),
-            resultSet.getString("name"),
-            resultSet.getBigDecimal("price_amount"),
-            resultSet.getInt("stock_quantity"),
-            resultSet.getString("category"),
-            resultSet.getString("brand"),
-            resultSet.getString("color"),
-            resultSet.getString("gender"),
-            resultSet.getInt("popularity_score"),
-            resultSet.getObject("created_at", OffsetDateTime.class)
-    );
 
     private final JdbcTemplate jdbcTemplate;
     private final ElasticsearchOperations elasticsearchOperations;
@@ -94,7 +79,10 @@ public class ProductBulkReindexer {
         long refreshStart = System.nanoTime();
         elasticsearchOperations.indexOps(ProductDocument.class).refresh();
         long refreshNanos = System.nanoTime() - refreshStart;
-        long targetDocuments = elasticsearchOperations.count(Query.findAll(), ProductDocument.class, index);
+        NativeQuery liveProducts = NativeQuery.builder()
+                .withQuery(q -> q.bool(ProductDocument.visibleProducts().build()))
+                .build();
+        long targetDocuments = elasticsearchOperations.count(liveProducts, ProductDocument.class, index);
         if (targetDocuments < totalRows || (recreateIndex && targetDocuments != totalRows)) {
             throw new IllegalStateException("Reindex count mismatch: source=" + totalRows + ", target=" + targetDocuments);
         }
@@ -156,7 +144,8 @@ public class ProductBulkReindexer {
                 }
 
                 long readStart = System.nanoTime();
-                List<ProductDocument> batch = jdbcTemplate.query(BATCH_SQL, ROW_MAPPER, lastReadId, batchSize);
+                List<ProductDocument> batch = jdbcTemplate.query(
+                        BATCH_SQL, ProductDocumentRowMapper::map, lastReadId, batchSize);
                 readNanos += System.nanoTime() - readStart;
                 checkInterrupted();
                 if (batch.isEmpty()) {

@@ -17,7 +17,7 @@ import com.marketengine.backend.product.api.ProductDtos.UpdateProductRequest;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductCategory;
 import com.marketengine.backend.product.domain.ProductRepository;
-import com.marketengine.backend.product.infrastructure.search.ProductSearchIndexer;
+import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
 
 import lombok.RequiredArgsConstructor;
 
@@ -27,7 +27,7 @@ public class ProductService {
 
     private final ProductRepository productRepository;
     private final ProductListSearcher productListSearcher;
-    private final ProductSearchIndexer productSearchIndexer;
+    private final ProductSearchOutbox productSearchOutbox;
     private final ProductListFeedCache productListFeedCache;
 
     @Transactional
@@ -46,7 +46,7 @@ public class ProductService {
                         request.popularityScore()
                 )
         );
-        productSearchIndexer.index(saved);
+        productSearchOutbox.enqueue(saved.getId());
         return ProductDetailResponse.from(saved);
     }
 
@@ -93,7 +93,7 @@ public class ProductService {
                 request.popularityScore()
         );
         productRepository.flush();
-        productSearchIndexer.index(product);
+        productSearchOutbox.enqueue(productId);
         return ProductDetailResponse.from(product);
     }
 
@@ -102,7 +102,7 @@ public class ProductService {
         Product product = findProduct(productId);
         productRepository.delete(product);
         productRepository.flush();
-        productSearchIndexer.delete(productId);
+        productSearchOutbox.enqueue(productId);
     }
 
     private ProductPageResponse searchProducts(

@@ -62,13 +62,10 @@
 
 ---
 
-### 🔄 1.4 DB 트랜잭션 내 ES 동기 호출 및 주문 재고 미반영
-- **관련 코드**: `ProductService.create/update/delete()`, `OrderCreateExecutor.execute()`
-- **문제점**:
-  1. **DB 트랜잭션과 외부 네트워크 I/O 결합**: `@Transactional` 내부에서 `productSearchIndexer.index(saved)`를 동기 호출합니다. ES 응답이 지연되면 DB 커넥션 풀(HikariCP)이 고갈되며, ES 저장 후 DB 트랜잭션이 롤백되면 데이터 불일치가 발생합니다.
-  2. **주문 시 검색 엔진 재고 미갱신**: 주문 생성 시 `product.decreaseStock()`으로 PostgreSQL의 재고는 차감하지만 Elasticsearch 문서의 `stockQuantity`는 갱신하지 않아, 검색 결과의 재고 수량이 영구적으로 초기값에 머무릅니다.
-- **개선 방안**:
-  - `@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)` + 비동기 처리(또는 Transactional Outbox 패턴)로 DB 커밋 이후 ES 색인이 수행되도록 분리합니다.
+### 1.4 상품 쓰기와 ES 색인, 주문 재고 반영
+
+- **상품 등록, 수정, 삭제에 Outbox 적용.** 기존에는 ES 응답을 기다리는 동안 상품 트랜잭션이 DB 커넥션을 점유했다. 이제 `ProductService`는 상품과 Outbox를 함께 커밋한다. 워커는 별도의 배치로 ES에 반영하고 실패한 항목을 재시도한다. [설계 개선 기록](IMPROVEMENT_LOG.md#상품-변경의-검색-반영)
+- **주문 재고 동기화는 미해결.** `OrderCreateExecutor.execute()`는 PostgreSQL의 재고만 차감한다. 해당 상품에 후속 색인이 발생하기 전까지 검색 결과의 `stockQuantity`가 주문 가능 수량과 다를 수 있다.
 
 ---
 
@@ -133,10 +130,11 @@
    - **반영 상태** 현재 요청 필터는 느린 응답과 HTTP 오류를 기록하고 추적용 ID 생성에 `ThreadLocalRandom`을 사용한다. 아래 수치는 변경 전 구조를 기준으로 한 병목 가설이다. [변경 기록](IMPROVEMENT_LOG.md#http-요청-로깅)
    - 7,000 RPS 부하 시 초당 7,000번의 `UUID.randomUUID()`(`SecureRandom` 내부 동기화 락 경합)와 `log.info("Request completed ...")` 표준 출력(stdout) 동기 I/O + Docker JSON 로그 디스크 쓰기가 발생하여 응답 지연율을 높입니다.
    - **개선**: 정상 200 응답은 샘플링하거나 지정된 임계치(예: `durationMs >= 200ms`) 이상인 슬로우 요청 및 에러(4xx/5xx)만 로깅하도록 변경합니다.
-2. **`hibernate.format_sql: true` 상시 활성화 (`application.yml`)**
-   - SQL 로그를 출력하지 않아도 Hibernate가 내부적으로 모든 SQL 문자열을 줄바꿈/정렬 포맷팅하느라 CPU와 메모리(GC)를 소모합니다. 부하 테스트 및 운영 환경에서는 `false`로 비활성화해야 합니다.
-3. **Elasticsearch 힙 메모리 512MB 제한 (`docker-compose.yml`)**
-   - 1,000만 건 문서를 다루는 ES 컨테이너의 `ES_JAVA_OPTS: -Xms512m -Xmx512m` 설정은 과도하게 작습니다. 캐시 미스 비중이 높은 시나리오에서는 Old GC 빈발로 Tail Latency가 튀게 되므로 최소 `2g~4g` 할당을 권장합니다.
+2. **Hibernate SQL 로그 포맷 설정 (`application.yml`)**
+   - Hibernate 6.6.45.Final에서 `SqlStatementLogger`는 `show_sql`과 `org.hibernate.SQL`의 DEBUG 로깅이 모두 꺼져 있으면 포맷터를 호출하기 전에 반환한다. 프로젝트 기본값은 `format_sql: false`로 명시했다. SQL을 출력할 때 들여쓰기를 생략하는 설정이며, 이번 피드 부하 테스트의 성능 개선으로 집계하지 않는다. [Hibernate SQL 로거 구현](https://github.com/hibernate/hibernate-orm/blob/6.6/hibernate-core/src/main/java/org/hibernate/engine/jdbc/spi/SqlStatementLogger.java)
+3. **Elasticsearch 힙 크기와 검색 지연 (`docker-compose.yml`)**
+   - 2026-11-10 기준 1,000만 문서의 단일 노드에서 512MiB 힙으로 약 9시간 33분 동안 Old GC와 회로 차단은 모두 0건이었다. 19:49 KST 피드 실험의 11,000~12,000 RPS 구간에서는 GC 정지가 5회 겹쳤고 합계 107.7ms, 최장 52.5ms였다. 같은 구간의 HTTP p99는 2.53초였다. GC의 기여도는 별도 비교가 필요하다.
+   - 기본 힙은 512MiB다. Redis를 끈 동일 검색 부하에서 `ES_HEAP_SIZE=2g`와 비교한 뒤 기본값을 결정한다. 힙 외에 파일 캐시와 같은 VM을 사용하는 서비스의 메모리도 고려한다. [힙 비교 절차](K6_SCENARIOS.md#elasticsearch-힙-크기-비교)
 
 ---
 
@@ -197,7 +195,7 @@
 ### 6.1 현재 `doc_values` 동작 여부
 - **적용 상태**: `ProductDocument`의 `createdAt`(`date`), `popularityScore`(`integer`), `id`(`long`) 모두 Elasticsearch 기본값인 **`doc_values: true`가 활성화**되어 있습니다.
 - **기술적 의의**:
-  - `ES_JAVA_OPTS: -Xms512m -Xmx512m`라는 극소 힙 메모리 환경에서도 1,000만 건 정렬 시 OOM(`CircuitBreakingException`)이 발생하지 않은 이유는, 정렬 데이터가 JVM Heap(`fielddata`)이 아닌 **디스크 기반 열 지향 저장소(`doc_values`)와 OS Page Cache**를 통해 처리되었기 때문입니다.
+  - 정렬 필드의 `doc_values`를 읽을 때 운영체제 파일 캐시도 사용한다. 힙을 늘리면 같은 메모리 예산에서 파일 캐시에 쓸 수 있는 공간이 줄어들 수 있다. [Elastic JVM 설정](https://www.elastic.co/docs/reference/elasticsearch/jvm-settings)
 
 ### 6.2 추가 최적화 포인트
 1. **불필요한 `doc_values` 및 역색인 비활성화 (`stockQuantity`)**
@@ -217,7 +215,7 @@
 - [ ] `OrderService`의 `memberRepository.findById()`를 `OrderCreateExecutor` 트랜잭션 내부로 이동 및 `isIdempotencyKeyViolation` 제약조건 판별 정교화
 - [ ] `OrderService.update/delete` 재고 증감 반영 및 `OrderService.list()` 페이징 적용
 - [x] `RequestResponseLoggingFilter`에서 느린 응답과 오류를 선별하고 요청 ID 생성 비용 축소
-- [ ] `hibernate.format_sql: false` 변경
+- [x] `hibernate.format_sql: false`를 명시하고 SQL 출력 조건 확인
 
 ### 🚀 Priority 2: 아키텍처 & 시나리오 고도화 (포트폴리오 차별화)
 - [ ] **무한 스크롤 커서 페이징(`No-Offset` / `search_after`)** 도입으로 `page >= 3` Deep Pagination 병목 근본 해결

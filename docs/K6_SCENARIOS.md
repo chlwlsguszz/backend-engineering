@@ -10,11 +10,11 @@ docker run --rm -v "${PWD}/scripts/k6:/scripts:ro" grafana/k6:1.5.0 run -e BASE_
 
 ## 검색
 
-1,000만 건 색인이 완료된 B9 환경을 사용한다. 아래 조회에서 `count`가 `10000000`인지 먼저 확인한다.
+1,000만 건 색인이 완료된 B9 카탈로그를 사용한다. 삭제 표시를 제외한 검색 가능 상품의 `count`가 `10000000`인지 먼저 확인한다.
 
 ```powershell
 $env:COMPOSE_PROJECT_NAME = 'marketengine-catalog-10m'
-Invoke-RestMethod 'http://localhost:9200/products/_count'
+Invoke-RestMethod 'http://localhost:9200/products/_count' -Method Post -ContentType 'application/json' -Body '{"query":{"bool":{"must_not":[{"term":{"outboxDeleted":true}}]}}}'
 k6 run -e CASE=pagination scripts/k6/search_scenarios.js
 ```
 
@@ -64,6 +64,40 @@ docker compose exec -T redis redis-cli PTTL 'productListFeed:v2::feed:q1?cat=&br
 ```powershell
 docker compose exec -T redis redis-cli INFO stats | Select-String 'keyspace_hits|keyspace_misses'
 Invoke-RestMethod 'http://localhost:9200/products/_stats/search?filter_path=_all.total.search.query_total' | ConvertTo-Json -Depth 6
+```
+
+### Elasticsearch 힙 크기 비교
+
+1,000만 건 환경에서 Redis를 끄고 `discovery`를 사용한다. 각 검색이 ES로 가므로 힙 크기를 비교하기 쉽다. 아래 명령은 프로젝트 루트의 PowerShell에서 사용한다. ES를 재생성하는 동안 검색은 잠시 중단된다. 같은 Compose 프로젝트와 데이터 볼륨을 사용하므로 재색인은 필요하지 않다.
+
+1. Redis 캐시를 끄고 백엔드의 `/actuator/health`가 `UP`인지 확인한다.
+
+```powershell
+$env:MARKETENGINE_CACHE_REDIS_ENABLED='false'; docker compose -p marketengine-catalog-10m up -d --no-deps backend
+```
+
+2. 첫 측정은 `512m`, 두 번째 측정은 `2g`로 아래 명령을 실행한다. 양쪽 모두 ES 재시작 후 같은 조건으로 예열한다.
+
+```powershell
+$env:ES_HEAP_SIZE='512m'; docker compose -p marketengine-catalog-10m up -d --wait --no-deps --force-recreate elasticsearch
+```
+
+3. 아래 검색을 한 번 예열하고 같은 명령으로 다시 측정한다. 50 RPS는 시작점이다. 목표 도착률, VU, 검색어 분포, ES 문서 수를 두 조건에서 맞춘다.
+
+```powershell
+docker run --rm --network marketengine-catalog-10m_default -v "${PWD}/scripts/k6:/scripts:ro" grafana/k6:0.58.0 run -e BASE_URL=http://backend:8080 -e CASE=discovery -e RATE=50 -e DURATION=60s -e PREALLOCATED_VUS=50 -e MAX_VUS=50 /scripts/search_scenarios.js
+```
+
+4. 각 측정 직전과 직후에 다음 카운터를 읽는다. 같은 ES 기동 내에서 GC 시간, 샤드 검색 수, 회로 차단 및 검색 거절 수의 증가분을 구하고 k6의 검색 유형별 p99, HTTP 실패, `dropped_iterations`와 함께 비교한다. Old 영역 점유율은 측정 중에도 표본을 수집한다. 재시작하면 노드 누적 카운터가 초기화된다.
+
+```powershell
+Invoke-RestMethod 'http://localhost:9200/_nodes/stats/jvm,indices,breaker,thread_pool?filter_path=nodes.*.jvm.mem.heap_max_in_bytes,nodes.*.jvm.mem.pools.old,nodes.*.jvm.gc.collectors,nodes.*.indices.search.query_total,nodes.*.breakers.*.tripped,nodes.*.thread_pool.search.rejected' | ConvertTo-Json -Depth 12
+```
+
+기존 실험 환경(512MiB, Redis ON)으로 복구할 때는 다음 명령을 실행한다. [Elastic JVM 메모리 압박 진단](https://www.elastic.co/docs/troubleshoot/elasticsearch/high-jvm-memory-pressure)
+
+```powershell
+$env:ES_HEAP_SIZE='512m'; $env:MARKETENGINE_CACHE_REDIS_ENABLED='true'; docker compose -p marketengine-catalog-10m up -d --wait elasticsearch backend
 ```
 
 ### 피드 처리량 한계 찾기

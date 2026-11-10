@@ -9,15 +9,13 @@ import org.springframework.data.elasticsearch.annotations.Field;
 import org.springframework.data.elasticsearch.annotations.FieldType;
 import org.springframework.data.elasticsearch.annotations.Setting;
 
-import com.marketengine.backend.product.domain.Product;
-
+import co.elastic.clients.elasticsearch._types.query_dsl.BoolQuery;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /**
- * Elasticsearch read model for product list/search (step 2: mapping only; no queries yet).
- * Document id equals PostgreSQL {@link Product#getId()}.
+ * Elasticsearch read model. Its document ID is the PostgreSQL product ID.
  */
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -81,18 +79,8 @@ public class ProductDocument {
         this.createdAt = createdAt;
     }
 
-    public static ProductDocument from(Product product) {
-        return new ProductDocument(
-                product.getId(),
-                product.getName(),
-                product.getPriceAmount(),
-                product.getStockQuantity(),
-                product.getCategory().name(),
-                product.getBrand(),
-                product.getColor(),
-                product.getGender(),
-                product.getPopularityScore(),
-                product.getCreatedAt()
-        );
+    static BoolQuery.Builder visibleProducts() {
+        // Existing catalog documents have no outbox metadata and must remain visible.
+        return new BoolQuery.Builder().mustNot(q -> q.term(t -> t.field("outboxDeleted").value(true)));
     }
 }

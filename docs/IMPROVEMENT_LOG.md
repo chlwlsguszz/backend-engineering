@@ -52,6 +52,22 @@ B9는 각 브랜드 아래 여러 모델이 공유하는 라인업을 만들고,
 
 클라이언트가 보낸 `X-Request-Id`는 응답과 로그에 사용한다. 헤더가 없거나 비어 있으면 `ThreadLocalRandom`으로 추적용 UUID v4를 생성한다. 전체 요청 수와 지연 분포는 k6와 HTTP 메트릭으로 확인하고, 개별 느린 요청과 오류는 요청 ID로 찾는다. 정상 요청의 로그가 줄어드는 효과와 실제 RPS, p99 변화는 같은 조건에서 다시 측정한다. [요청 필터](../backend/src/main/java/com/marketengine/backend/common/logging/RequestResponseLoggingFilter.java)
 
+## 상품 변경의 검색 반영
+
+기존에는 상품을 등록하거나 수정, 삭제하는 DB 트랜잭션 안에서 Elasticsearch를 호출했다. ES 응답을 기다리는 동안 DB 커넥션을 점유했고, ES 쓰기 성공 후 DB 커밋이 실패하면 검색에만 변경이 남을 수 있었다.
+
+V10부터 `ProductService`는 상품 변경과 `product_search_outbox` 기록을 같은 PostgreSQL 트랜잭션에 저장한다. 상품 ID당 대기 행 하나를 두고 변경할 때마다 새 버전을 부여한다. 워커가 가져가기 전에 같은 상품이 여러 번 바뀌면 마지막 상태만 보낸다. V10은 빈 Outbox를 생성한다. 기존 카탈로그의 1,000만 건과 ES 문서는 그대로 사용한다. [상품 서비스](../backend/src/main/java/com/marketengine/backend/product/application/ProductService.java)와 [마이그레이션](../backend/src/main/resources/db/migration/V10__product_search_outbox.sql)
+
+워커는 기본 250ms 간격으로 최대 500개를 선점하고 커밋된 상품을 읽는다. DB 커넥션을 반환한 뒤 한 번의 ES Bulk 요청을 보내고 성공한 항목만 정리한다. 실패한 상품의 재시도 간격은 1초부터 최대 60초까지 늘어난다. 워커가 도중에 종료되면 60초 뒤 다른 워커가 인계할 수 있다. ES는 저장된 버전보다 새 변경만 적용한다. 삭제한 상품에는 ID, 버전, 삭제 표시만 남겨 뒤늦은 수정으로 다시 노출되는 것을 방지한다. 이 표시는 검색과 재색인 검증 건수에서 제외되며, 인덱스를 재생성하면 정리된다. [Outbox 저장소](../backend/src/main/java/com/marketengine/backend/product/infrastructure/search/ProductSearchOutbox.java)와 [ES 반영 코드](../backend/src/main/java/com/marketengine/backend/product/infrastructure/search/ProductOutboxPublisher.java)
+
+상품 쓰기 API의 성공은 PostgreSQL 커밋을 의미한다. 상세 조회에는 즉시 반영되고, 목록은 워커 처리와 ES refresh 후 갱신된다. 이미 캐싱한 목록에는 Redis TTL만큼 이전 값이 보일 수 있다. 주문에 의한 재고 차감은 이 Outbox를 생성하지 않는다. 상품 쓰기 p95와 검색 반영 지연은 아직 실측하지 않았다.
+
+1,000만 건 Compose 환경에서 다음 명령으로 대기 중인 상품 수를 확인한다. 실패와 워커 재시작을 시험할 때는 실행 중인 백엔드에서 ES를 중지하고 상품 하나를 여러 번 수정한다. DB 상세 조회에 마지막 수정이 보이고 Outbox에 해당 ID 한 건이 남는지 확인한다. ES를 다시 시작한 뒤에는 대기 행이 사라지고 `GET /products/_doc/{id}`에 최종 값이 보이는지 확인한다.
+
+```powershell
+docker compose -p marketengine-catalog-10m exec -T postgres psql -U marketengine -d marketengine -c "SELECT count(*) AS pending_products, count(*) FILTER (WHERE retry_count > 0) AS retrying_products FROM product_search_outbox"
+```
+
 ## Elasticsearch 재색인
 
 ### 4. 순차 배치 루프에서 DB 조회와 ES 쓰기를 분리
