@@ -2,6 +2,8 @@ package com.marketengine.backend.order.application;
 
 import java.util.List;
 
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.PSQLState;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -72,9 +74,16 @@ public class OrderService {
     }
 
     private boolean isIdempotencyKeyViolation(DataIntegrityViolationException ex) {
-        Throwable cause = ex.getMostSpecificCause();
-        String message = cause != null ? cause.getMessage() : ex.getMessage();
-        return message != null && message.toLowerCase().contains("idempotency");
+        for (Throwable cause = ex.getCause(); cause != null; cause = cause.getCause()) {
+            if (cause instanceof PSQLException pg) {
+                var error = pg.getServerErrorMessage();
+                return PSQLState.UNIQUE_VIOLATION.getState().equals(pg.getSQLState())
+                        && error != null
+                        && "orders".equals(error.getTable())
+                        && Order.IDEMPOTENCY_CONSTRAINT.equals(error.getConstraint());
+            }
+        }
+        return false;
     }
 
     private Order findOrder(Long orderId) {

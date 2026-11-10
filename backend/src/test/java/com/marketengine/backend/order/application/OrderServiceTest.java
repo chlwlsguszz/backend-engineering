@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
@@ -74,14 +75,15 @@ class OrderServiceTest {
     }
 
     @Test
-    void create_readsCommittedOrderAfterConcurrentIdempotencyKeyViolation() {
+    void create_propagatesUniqueViolationWithoutPostgresConstraintMetadata() {
         var request = new CreateOrderRequest(1L, 1001L, 1, "duplicate");
-        var expected = mock(OrderResponse.class);
-        when(orderCreateExecutor.execute(request))
-                .thenThrow(new DataIntegrityViolationException("uk_orders_member_idempotency_key"));
-        when(orderCreateExecutor.findExistingResponse(request)).thenReturn(Optional.of(expected));
+        var failure = new DataIntegrityViolationException("order insert failed",
+                new SQLException("duplicate key: uk_orders_member_idempotency_key", "23505"));
+        when(orderCreateExecutor.execute(request)).thenThrow(failure);
 
-        assertThat(orderService.create(request)).isSameAs(expected);
+        assertThatThrownBy(() -> orderService.create(request)).isSameAs(failure);
+        verify(orderCreateExecutor).execute(request);
+        verifyNoMoreInteractions(orderCreateExecutor);
     }
 
     @Test

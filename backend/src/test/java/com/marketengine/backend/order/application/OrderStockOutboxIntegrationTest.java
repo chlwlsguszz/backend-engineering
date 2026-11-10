@@ -6,11 +6,16 @@ import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertAll;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.postgresql.util.PSQLException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -38,6 +43,7 @@ import io.micrometer.core.instrument.MeterRegistry;
         "spring.data.elasticsearch.repositories.enabled=false",
         "spring.datasource.driver-class-name=org.postgresql.Driver",
         "spring.datasource.hikari.pool-name=order-stock-outbox",
+        "spring.datasource.hikari.maximum-pool-size=16",
         "spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect",
         "spring.jpa.hibernate.ddl-auto=none",
         "spring.flyway.enabled=true",
@@ -89,42 +95,49 @@ class OrderStockOutboxIntegrationTest {
         outbox.complete(latest);
     }
 
-    @Test
-    void concurrentDuplicateOrdersForTheLastUnitReturnTheSameOrder() throws Exception {
-        long productId = 1003L;
-        jdbc.update("INSERT INTO products (id, name, price_amount, stock_quantity) VALUES (?, 'Last unit', 10, 1)",
-                productId);
-        var request = new CreateOrderRequest(1L, productId, 1, "duplicate-last-unit");
+    // With ample stock the losing requests reach the UNIQUE index on INSERT.
+    // With the last unit the loser raises INSUFFICIENT_STOCK before the INSERT.
+    @ParameterizedTest(name = "{2} concurrent duplicate orders with initial stock {1}")
+    @CsvSource({"1003, 1, 2", "1014, 10, 10"})
+    void concurrentDuplicateOrdersReturnTheSameOrder(long productId, int initialStock, int callerCount) throws Exception {
+        jdbc.update("INSERT INTO products (id, name, price_amount, stock_quantity) VALUES (?, 'Concurrent SKU', 10, ?)",
+                productId, initialStock);
+        var request = new CreateOrderRequest(1L, productId, 1, "concurrent-duplicate-" + productId);
 
-        try (var callers = Executors.newFixedThreadPool(2)) {
+        try (var callers = Executors.newFixedThreadPool(callerCount)) {
             var replies = transaction.execute(status -> {
                 jdbc.queryForObject("SELECT id FROM products WHERE id = ? FOR UPDATE", Long.class, productId);
-                var first = callers.submit(() -> createOrderOutcome(request));
-                var second = callers.submit(() -> createOrderOutcome(request));
-                // Release the gate only after both requests have missed the key and reached the stock lock.
-                await().alias("both orders waiting for the product row").pollInterval(Duration.ofMillis(25))
+                var submitted = IntStream.range(0, callerCount)
+                        .mapToObj(i -> callers.submit(() -> createOrderOutcome(request)))
+                        .toList();
+                // The gate holds all requests after the idempotency lookup and before the stock check.
+                await().alias("all orders waiting for the product row").pollInterval(Duration.ofMillis(25))
                         .atMost(Duration.ofSeconds(10)).until(() -> jdbc.queryForObject("""
                                 SELECT count(DISTINCT pid) FROM pg_locks
                                 WHERE relation = 'products'::regclass AND mode = 'RowShareLock' AND granted
                                   AND cardinality(pg_blocking_pids(pid)) > 0
-                                """, Integer.class) == 2);
-                return List.of(first, second);
+                                """, Integer.class) == callerCount);
+                return submitted;
             });
-            var outcomes = List.of(replies.get(0).get(10, TimeUnit.SECONDS), replies.get(1).get(10, TimeUnit.SECONDS));
+            List<String> outcomes = new ArrayList<>(callerCount);
+            for (var reply : replies) {
+                outcomes.add(reply.get(10, TimeUnit.SECONDS));
+            }
             var orderIds = jdbc.queryForList("SELECT id FROM orders WHERE product_id = ?", Long.class, productId);
             var stock = jdbc.queryForObject("SELECT stock_quantity FROM products WHERE id = ?", Integer.class, productId);
             var pending = outbox.claim(10);
             try {
                 assertAll(
                         () -> assertThat(orderIds).hasSize(1),
-                        () -> assertThat(stock).isZero(),
+                        () -> assertThat(stock).isEqualTo(initialStock - request.quantity()),
                         () -> assertThat(pending).singleElement().satisfies(entry -> {
                             assertThat(entry.productId()).isEqualTo(productId);
-                            assertThat(entry.document().getStockQuantity()).isZero();
+                            assertThat(entry.document().getStockQuantity()).isEqualTo(initialStock - request.quantity());
                         }),
                         () -> assertThat(outcomes)
                                 .as("orders=%s, stock=%s, pending products=%s", orderIds, stock, pending.size())
-                                .containsExactly("order " + orderIds.getFirst(), "order " + orderIds.getFirst())
+                                .hasSize(callerCount)
+                                .containsOnly("order " + orderIds.getFirst())
                 );
             } finally {
                 outbox.complete(pending);
@@ -138,6 +151,29 @@ class OrderStockOutboxIntegrationTest {
         } catch (BusinessException failure) {
             return failure.errorCode().name();
         }
+    }
+
+    @Test
+    @Sql(statements = "CREATE UNIQUE INDEX uk_test_idempotency_product ON orders (product_id) WHERE product_id = 1015")
+    @Sql(statements = "DROP INDEX uk_test_idempotency_product", executionPhase = Sql.ExecutionPhase.AFTER_TEST_METHOD)
+    void propagatesUnrelatedUniqueViolationEvenWhenItsNameContainsIdempotency() {
+        long productId = 1015L;
+        insertProductWithTenUnits(productId);
+        var first = orders.create(new CreateOrderRequest(1L, productId, 1, "unique-index-first"));
+        outbox.complete(outbox.claim(10));
+
+        var second = new CreateOrderRequest(1L, productId, 1, "unique-index-second");
+        assertThatThrownBy(() -> orders.create(second))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .rootCause().isInstanceOfSatisfying(PSQLException.class, cause -> {
+                    assertThat(cause.getSQLState()).isEqualTo("23505");
+                    assertThat(cause.getServerErrorMessage().getConstraint()).isEqualTo("uk_test_idempotency_product");
+                });
+        assertThat(jdbc.queryForList("SELECT id FROM orders WHERE product_id = ?", Long.class, productId))
+                .containsExactly(first.id());
+        assertThat(jdbc.queryForObject("SELECT stock_quantity FROM products WHERE id = ?", Integer.class, productId))
+                .isEqualTo(9);
+        assertThat(outbox.claim(10)).isEmpty();
     }
 
     @Test

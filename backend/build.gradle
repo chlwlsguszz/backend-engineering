@@ -37,7 +37,7 @@ dependencies {
     annotationProcessor 'jakarta.annotation:jakarta.annotation-api'
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
-    runtimeOnly 'org.postgresql:postgresql'
+    implementation 'org.postgresql:postgresql'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'com.h2database:h2'
     testImplementation 'org.testcontainers:junit-jupiter'

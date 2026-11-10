@@ -27,13 +27,15 @@ import lombok.NoArgsConstructor;
 @Table(
         name = "orders",
         uniqueConstraints = @UniqueConstraint(
-                name = "uk_orders_member_idempotency_key",
+                name = Order.IDEMPOTENCY_CONSTRAINT,
                 columnNames = {"member_id", "idempotency_key"}
         )
 )
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Order {
+
+    public static final String IDEMPOTENCY_CONSTRAINT = "uk_orders_member_idempotency_key";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
