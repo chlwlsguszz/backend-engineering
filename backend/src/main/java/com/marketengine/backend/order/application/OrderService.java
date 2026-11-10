@@ -36,10 +36,10 @@ public class OrderService {
         try {
             return orderCreateExecutor.execute(request);
         } catch (BusinessException ex) {
-            if (ex.errorCode() != ErrorCode.INSUFFICIENT_STOCK) {
+            if (ex.errorCode() != ErrorCode.INSUFFICIENT_STOCK && ex.errorCode() != ErrorCode.PRODUCT_NOT_FOR_SALE) {
                 throw ex;
             }
-            // A concurrent request with the same key may have consumed the last unit.
+            // The winning order can commit before the product sells out or is withdrawn.
             return orderCreateExecutor.findExistingResponse(request).orElseThrow(() -> ex);
         } catch (DataIntegrityViolationException ex) {
             if (!PostgresConstraint.matches(ex, PSQLState.UNIQUE_VIOLATION, "orders", Order.IDEMPOTENCY_CONSTRAINT)) {

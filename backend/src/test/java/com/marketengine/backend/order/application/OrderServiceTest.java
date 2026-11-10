@@ -12,6 +12,8 @@ import java.sql.SQLException;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -63,14 +65,25 @@ class OrderServiceTest {
         verifyNoMoreInteractions(orderCreateExecutor);
     }
 
-    @Test
-    void create_preservesInsufficientStockWhenNoConcurrentOrderExists() {
+    @ParameterizedTest
+    @EnumSource(value = ErrorCode.class, names = {"INSUFFICIENT_STOCK", "PRODUCT_NOT_FOR_SALE"})
+    void create_preservesAvailabilityFailureWhenNoConcurrentOrderExists(ErrorCode code) {
         var request = new CreateOrderRequest(1L, 1001L, 1, "last-unit");
-        var failure = new BusinessException(ErrorCode.INSUFFICIENT_STOCK, "No units available");
+        var failure = new BusinessException(code);
         when(orderCreateExecutor.execute(request)).thenThrow(failure);
         when(orderCreateExecutor.findExistingResponse(request)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> orderService.create(request)).isSameAs(failure);
+    }
+
+    @Test
+    void create_replaysConcurrentOrderIfTheProductWasWithdrawnBeforeTheDuplicateReservedStock() {
+        var request = new CreateOrderRequest(1L, 1001L, 1, "withdrawn-during-retry");
+        var committed = mock(OrderResponse.class);
+        when(orderCreateExecutor.execute(request)).thenThrow(new BusinessException(ErrorCode.PRODUCT_NOT_FOR_SALE));
+        when(orderCreateExecutor.findExistingResponse(request)).thenReturn(Optional.of(committed));
+
+        assertThat(orderService.create(request)).isSameAs(committed);
     }
 
     @Test
