@@ -86,9 +86,9 @@ class OrderServiceTest {
                 "ACTIVE",
                 100
         );
-        ReflectionTestUtils.setField(product, "id", 2L);
+        ReflectionTestUtils.setField(product, "id", 1001L);
         Order existing = new Order(member, product, 3, new BigDecimal("30.00"), OrderStatus.CREATED, "key-1");
-        CreateOrderRequest request = new CreateOrderRequest(1L, 2L, 3, "key-1");
+        CreateOrderRequest request = new CreateOrderRequest(1L, 1001L, 3, "key-1");
 
         when(orderRepository.findByMemberIdAndIdempotencyKey(1L, "key-1")).thenReturn(Optional.of(existing));
 

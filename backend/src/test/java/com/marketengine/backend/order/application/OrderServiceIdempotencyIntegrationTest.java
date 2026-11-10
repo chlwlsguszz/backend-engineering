@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import com.marketengine.backend.common.exception.BusinessException;
 import com.marketengine.backend.common.exception.ErrorCode;
@@ -23,8 +24,10 @@ import com.marketengine.backend.order.api.OrderDtos.CreateOrderRequest;
 import com.marketengine.backend.order.api.OrderDtos.OrderResponse;
 import com.marketengine.backend.order.domain.OrderRepository;
 import com.marketengine.backend.product.domain.ProductRepository;
+import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
 
 @SpringBootTest
+@MockitoBean(types = ProductSearchOutbox.class)
 @TestPropertySource(properties = {
         "marketengine.elasticsearch.enabled=false",
         "spring.data.elasticsearch.repositories.enabled=false",

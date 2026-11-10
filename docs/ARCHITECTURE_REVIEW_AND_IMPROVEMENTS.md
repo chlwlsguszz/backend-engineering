@@ -65,7 +65,7 @@
 ### 1.4 상품 쓰기와 ES 색인, 주문 재고 반영
 
 - **상품 등록, 수정, 삭제에 Outbox 적용.** 기존에는 ES 응답을 기다리는 동안 상품 트랜잭션이 DB 커넥션을 점유했다. 이제 `ProductService`는 상품과 Outbox를 함께 커밋한다. 워커는 별도의 배치로 ES에 반영하고 실패한 항목을 재시도한다. [설계 개선 기록](IMPROVEMENT_LOG.md#상품-변경의-검색-반영)
-- **주문 재고 동기화는 미해결.** `OrderCreateExecutor.execute()`는 PostgreSQL의 재고만 차감한다. 해당 상품에 후속 색인이 발생하기 전까지 검색 결과의 `stockQuantity`가 주문 가능 수량과 다를 수 있다.
+- **주문 생성으로 차감된 재고도 Outbox에 연결.** `OrderCreateExecutor.execute()`가 주문과 재고 차감, 해당 상품의 색인 요청을 한 트랜잭션에 반영한다. 검색 결과의 `stockQuantity`는 워커 처리와 ES refresh, 기존 목록 캐시의 만료 후 갱신된다. [주문 재고 반영 기록](IMPROVEMENT_LOG.md#주문-생성-시-차감한-재고를-검색에-반영)
 
 ---
 

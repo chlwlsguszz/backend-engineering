@@ -14,13 +14,16 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import com.marketengine.backend.order.api.OrderDtos.CreateOrderRequest;
 import com.marketengine.backend.order.domain.Order;
 import com.marketengine.backend.order.domain.OrderRepository;
 import com.marketengine.backend.product.domain.ProductRepository;
+import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
 
 @SpringBootTest
+@MockitoBean(types = ProductSearchOutbox.class)
 @TestPropertySource(properties = {
         "marketengine.elasticsearch.enabled=false",
         "spring.data.elasticsearch.repositories.enabled=false",

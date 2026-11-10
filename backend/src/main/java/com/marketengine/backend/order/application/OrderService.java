@@ -79,7 +79,7 @@ public class OrderService {
     }
 
     private Order validateSameRequest(Order existing, CreateOrderRequest request) {
-        if (existing.getProduct().getId() != request.productId()
+        if (!request.productId().equals(existing.getProduct().getId())
                 || existing.getQuantity() != request.quantity()) {
             throw new BusinessException(
                     ErrorCode.IDEMPOTENCY_KEY_CONFLICT,

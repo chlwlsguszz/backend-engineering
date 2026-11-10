@@ -3,6 +3,8 @@ package com.marketengine.backend.order.application;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -25,6 +27,7 @@ import com.marketengine.backend.order.domain.OrderStatus;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductCategory;
 import com.marketengine.backend.product.domain.ProductRepository;
+import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
 
 @ExtendWith(MockitoExtension.class)
 class OrderCreateExecutorTest {
@@ -34,6 +37,9 @@ class OrderCreateExecutorTest {
 
     @Mock
     private ProductRepository productRepository;
+
+    @Mock
+    private ProductSearchOutbox productSearchOutbox;
 
     @InjectMocks
     private OrderCreateExecutor orderCreateExecutor;
@@ -67,6 +73,7 @@ class OrderCreateExecutorTest {
         assertThat(response.status()).isEqualTo(OrderStatus.CREATED);
         assertThat(response.idempotencyKey()).isEqualTo("key-1");
         assertThat(product.getStockQuantity()).isEqualTo(2);
+        verify(productSearchOutbox).enqueue(2L);
     }
 
     @Test
@@ -94,5 +101,6 @@ class OrderCreateExecutorTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(ex -> assertThat(((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.INSUFFICIENT_STOCK));
         assertThat(product.getStockQuantity()).isEqualTo(5);
+        verifyNoInteractions(productSearchOutbox);
     }
 }

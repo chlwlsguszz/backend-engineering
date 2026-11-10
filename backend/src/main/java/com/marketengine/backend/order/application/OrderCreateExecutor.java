@@ -14,6 +14,7 @@ import com.marketengine.backend.order.domain.OrderRepository;
 import com.marketengine.backend.order.domain.OrderStatus;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductRepository;
+import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
 
 import lombok.RequiredArgsConstructor;
 
@@ -23,6 +24,7 @@ public class OrderCreateExecutor {
 
     private final OrderRepository orderRepository;
     private final ProductRepository productRepository;
+    private final ProductSearchOutbox productSearchOutbox;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public OrderResponse execute(CreateOrderRequest request, Member member) {
@@ -41,6 +43,7 @@ public class OrderCreateExecutor {
                         request.idempotencyKey()
                 )
         );
+        productSearchOutbox.enqueue(request.productId());
         return OrderResponse.from(saved);
     }
 }

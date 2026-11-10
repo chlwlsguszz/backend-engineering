@@ -38,7 +38,7 @@ B9는 각 브랜드 아래 여러 모델이 공유하는 라인업을 만들고,
 
 상품 등록, 수정, 삭제 때마다 목록 캐시 전체를 지우면 변경과 관계없는 홈, 카테고리, 검색어 피드까지 동시에 다시 채워야 했다. 기본 Redis 캐시 삭제 전략은 키 패턴 탐색에 `KEYS`를 사용하고 매칭된 항목을 `DEL`로 지운다. 상품 쓰기 경로에서 전체 삭제를 제거하고, Redis에 피드 결과를 저장할 때마다 기본 30~60초의 TTL을 부여하도록 변경했다. 기존 30분 TTL 항목은 이전 이름 공간에서 자연 만료된다. [피드 캐시 설정](../backend/src/main/java/com/marketengine/backend/common/config/RedisCacheConfig.java)
 
-이 정책은 목록 응답의 Redis 체류 시간을 제한한다. 주문에 따른 재고 차감은 PostgreSQL에서 처리하며 현재 주문 경로에는 ES 재색인이 없어 ES 기반 목록의 재고 지연은 별도 동기화 문제로 남는다. 만료 시점에 같은 인기 키를 동시에 조회하면 여러 요청이 검색 저장소로 갈 수 있다. 변경 후 실측은 [피드 비교 절차](K6_SCENARIOS.md#같은-피드로-캐시-효과-비교)에 따른다.
+이 정책은 목록 응답의 Redis 체류 시간을 제한한다. 주문으로 재고가 줄면 Outbox 워커가 ES에 반영하고, 이미 캐싱한 목록은 TTL 만료 후 새 재고를 읽는다. 만료 시점에 같은 인기 키를 동시에 조회하면 여러 요청이 검색 저장소로 갈 수 있다. 변경 후 실측은 [피드 비교 절차](K6_SCENARIOS.md#같은-피드로-캐시-효과-비교)에 따른다.
 
 ### 필터 조합별 분기를 공통 캐시 키로 교체
 
@@ -60,13 +60,19 @@ V10부터 `ProductService`는 상품 변경과 `product_search_outbox` 기록을
 
 워커는 기본 250ms 간격으로 최대 500개를 선점하고 커밋된 상품을 읽는다. DB 커넥션을 반환한 뒤 한 번의 ES Bulk 요청을 보내고 성공한 항목만 정리한다. 실패한 상품의 재시도 간격은 1초부터 최대 60초까지 늘어난다. 워커가 도중에 종료되면 60초 뒤 다른 워커가 인계할 수 있다. ES는 저장된 버전보다 새 변경만 적용한다. 삭제한 상품에는 ID, 버전, 삭제 표시만 남겨 뒤늦은 수정으로 다시 노출되는 것을 방지한다. 이 표시는 검색과 재색인 검증 건수에서 제외되며, 인덱스를 재생성하면 정리된다. [Outbox 저장소](../backend/src/main/java/com/marketengine/backend/product/infrastructure/search/ProductSearchOutbox.java)와 [ES 반영 코드](../backend/src/main/java/com/marketengine/backend/product/infrastructure/search/ProductOutboxPublisher.java)
 
-상품 쓰기 API의 성공은 PostgreSQL 커밋을 의미한다. 상세 조회에는 즉시 반영되고, 목록은 워커 처리와 ES refresh 후 갱신된다. 이미 캐싱한 목록에는 Redis TTL만큼 이전 값이 보일 수 있다. 주문에 의한 재고 차감은 이 Outbox를 생성하지 않는다. 상품 쓰기 p95와 검색 반영 지연은 아직 실측하지 않았다.
+상품 쓰기 API의 성공은 PostgreSQL 커밋을 의미한다. 상세 조회에는 즉시 반영되고, 목록은 워커 처리와 ES refresh 후 갱신된다. 이미 캐싱한 목록에는 Redis TTL만큼 이전 값이 보일 수 있다. 상품 쓰기 p95와 검색 반영 지연은 아직 실측하지 않았다.
 
 1,000만 건 Compose 환경에서 다음 명령으로 대기 중인 상품 수를 확인한다. 실패와 워커 재시작을 시험할 때는 실행 중인 백엔드에서 ES를 중지하고 상품 하나를 여러 번 수정한다. DB 상세 조회에 마지막 수정이 보이고 Outbox에 해당 ID 한 건이 남는지 확인한다. ES를 다시 시작한 뒤에는 대기 행이 사라지고 `GET /products/_doc/{id}`에 최종 값이 보이는지 확인한다.
 
 ```powershell
 docker compose -p marketengine-catalog-10m exec -T postgres psql -U marketengine -d marketengine -c "SELECT count(*) AS pending_products, count(*) FILTER (WHERE retry_count > 0) AS retrying_products FROM product_search_outbox"
 ```
+
+### 주문 생성 시 차감한 재고를 검색에 반영
+
+기존 주문은 PostgreSQL 재고만 차감해 검색 결과에 이전 수량이 남았다. 이제 주문 생성 트랜잭션이 주문 저장 후 같은 상품 ID를 기존 Outbox에 기록한다. 주문 생성이나 Outbox 기록이 실패하면 주문과 차감이 함께 롤백된다. 이미 처리한 멱등성 키로 같은 주문을 다시 요청하면 기존 주문을 반환한다. 한 SKU에 주문이 몰려도 대기 행은 하나이며, 워커는 PostgreSQL에서 읽은 최종 재고 수량을 ES에 쓴다. [주문 생성 코드](../backend/src/main/java/com/marketengine/backend/order/application/OrderCreateExecutor.java)
+
+성공한 신규 주문마다 DB에 Outbox 쓰기 한 번이 추가된다. 주문 TPS와 색인 지연은 아직 측정하지 않았다. 배포 전에 이미 어긋난 수량은 해당 상품의 다음 변경이나 기존 재색인 작업에서 바로잡힌다.
 
 ## Elasticsearch 재색인
 
