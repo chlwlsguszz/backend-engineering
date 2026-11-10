@@ -1,91 +1,42 @@
-# 🚀 Market Backend Engine
+# Market Backend Engine
 
-## 📌 Project Overview
+Java 21과 Spring Boot 기반의 단일 SKU 주문 및 상품 검색 포트폴리오다. PostgreSQL 16이 주문과 재고의 원본이고 Elasticsearch 8.17은 검색용 복제본이다. Next.js 화면에서 검색, 주문, 재시도를 검증하고 k6로 부하를 생성한다. [프로젝트 계획과 검증 현황](docs/PLAN.md)
 
-[프로젝트 개선 순서와 완료 기준](docs/PLAN.md)
+## 구현과 측정 결과
 
-대용량 트래픽이 발생하는 e-commerce 환경을 가정하여, 1,000만 건 이상의 상품 데이터 검색 성능을 최적화하고 고동시성 환경에서의 주문 데이터 무결성을 보장하는 백엔드 시스템입니다. 단일 쿼리 튜닝부터 검색 엔진 마이그레이션, 비관적 락을 통한 동시성 제어까지 데이터 기반의 성능 개선을 목표로 개발되었습니다.
+- **주문과 재고.** 주문 생성은 회원과 멱등성 키를 확인한 뒤 같은 트랜잭션에서 재고를 조건부 차감하고 단가를 받아 주문과 Outbox를 저장한다. 수량 수정은 점유량 차이만 반영하고 취소는 한 번만 재고를 복원한다. 최초 요청 수량을 보존해 수정 또는 취소 후에도 동일한 POST를 재시도할 수 있다. 상품 관리 PUT은 상세의 최신 `version`을 요구한다. [주문 실행](backend/src/main/java/com/marketengine/backend/order/application/OrderCreateExecutor.java)
+- **중복 주문 실험.** 이전 쓰기 경로에서 20 POST/s로 조건별 20초 동안 측정했다. 중복 전송 80건을 포함한 400 POST에서 PostgreSQL에 신규 주문 320건만 남았다. 이는 특정 부하의 정합성 결과이며 최대 처리량은 별도로 측정한다. [원본 조건과 p95](docs/K6_SCENARIOS.md#2026-11-10-실측-결과)
+- **상품 검색과 캐시.** 기본 ES 및 선택 가능한 PostgreSQL 검색을 제공한다. 최신순과 인기순 모두 ID로 동점을 해소한다. 목록은 최대 100개, 탐색 범위는 10,000건이다. 크기 12의 첫 세 페이지를 저장소별 Redis 캐시에 30~60초간 저장한다. 상세와 주문 가능 수량은 DB에서 확인한다. [검색 실험](docs/K6_SCENARIOS.md)
+- **1,000만 SKU 재색인.** V8 카탈로그에서 워커 8개, 배치 5,000개로 재생성한 인덱스의 1,000만 건을 검증했다. 재색인 벽시계 시간은 5분 14.815초, Flyway를 포함한 Gradle 전체 시간은 8분 27초였다. 검색 RPS, SQL 단건 지연, 재색인 시간은 별도 지표로 관리한다. [실험 이력](docs/IMPROVEMENT_LOG.md)
+- **재현.** CI는 Gradle 테스트와 PostgreSQL/ES 컨테이너 실행 여부, 프론트 lint/build 및 실제 브라우저 주문을 검사한다. Grafana의 주문 HTTP 200 요청률에는 재시도가 포함된다. 신규 주문 처리량과 재고는 k6 실행 키로 PostgreSQL에서 대조한다. [CI](.github/workflows/ci.yml)와 [시나리오](docs/K6_SCENARIOS.md)
 
-## 🛠 Tech Stack
+## API 및 데모 운영
 
-| **Category** | **Technologies** |
-| --- | --- |
-| **Backend** | Java 21, Spring Boot 3.5.13, Gradle |
-| **Database & Cache** | PostgreSQL 16, ElasticSearch, Redis |
-| **Infra & DevOps** | Docker Compose, GitHub Actions, Flyway |
-| **Test & Monitoring** | k6, Prometheus, Grafana, JUnit, Mockito |
+로컬 데모에는 인증이나 결제 연동이 없다. 화면의 회원 1번은 시드된 가상 회원이다. 회원 API는 이메일과 이름만 다루며 비밀번호 입력을 사용하지 않는다. Compose의 공개 포트는 루프백에 바인딩한다. 외부 호스팅은 별도 소유자/관리자 권한과 자격 증명 설정이 전제다.
 
-## 🎯 Key Technical Achievements
+- 회원 및 주문 목록은 `?size=20&beforeId=<nextCursor>`를 사용한다. 응답의 `data`는 `items`, `nextCursor`, `hasNext`이고 마지막 페이지의 커서는 null이다. 과거 배열 응답을 쓰는 클라이언트는 `data.items`로 이관한다.
+- `DELETE /api/orders/{id}`는 취소다. 주문 이력과 키가 유지되고 재취소는 성공한다. 확정 또는 생성 상태에서 수량을 조정할 수 있으며 취소 상태는 최종 상태다. 기존 주문의 최초 수량 기록이 없었던 경우 V11은 업그레이드 당시 수량을 재시도 비교 기준으로 사용한다.
+- 일반 개발 환경은 빈 DB에서 B9 상품 1,000개를 만든다. 10만 건 및 1,000만 건은 아래 명령으로 명시한다. 상품과 회원이 없는 새 환경은 `SPRING_PROFILES_ACTIVE=empty`를 지정한다. 이 환경에서 Compose로 재색인을 직접 실행하면 프로필을 `--spring.profiles.active=empty,reindex`로 전달한다. 기존 볼륨의 환경 변수를 바꿔도 시드는 다시 생성되지 않는다.
+- 기본 Compose는 백엔드 기동 전에 PostgreSQL과 ES가 준비될 때까지 기다린다. 기동 후 ES가 중단돼도 주문은 DB에 커밋되고 Outbox에서 반영을 재시도한다. Redis 장애 중에는 피드가 원본 검색으로 우회하므로 해당 기간의 검색 부하는 ES 또는 PG에서 처리한다.
 
-### 1. 1,000만 건 대용량 데이터 검색 성능 최적화
 
-- QueryDSL을 도입하여 복잡한 필터 검색 코드를 효율적으로 개선했습니다.
-- 
-    
-    `totalCount` 연산 병목을 무한 스크롤 형태의 `Slice` 방식으로 해결하여 조회 속도를 1400ms에서 25ms로 단축했습니다.
-    
-- 
-    
-    `EXPLAIN ANALYZE`로 병목을 식별하고 B-tree 인덱스를 적용하여 최신순 검색을 1842ms에서 0.08ms로 개선했습니다.
-    
-- 
-    
-    `pg_trgm` 역색인 인덱스와 `word_similarity` 함수로 오타 및 유사도 검색 속도를 5000ms에서 0.8ms로 단축했습니다.
-    
-- RDBMS 환경의 힙 스캔 병목 한계 극복을 위해 ElasticSearch 마이그레이션을 단행했습니다.
-- 기존 실험에서는 PostgreSQL에서 상품을 ID 순으로 나눠 읽고 Elasticsearch에 일괄 저장하여 1,000만 건을 28분에 초기 색인했습니다. 현재 구현은 같은 배치 크기에서 순차 처리와 병렬 처리 시간을 비교할 수 있습니다.
+## 로컬에서 검색과 주문 실행
 
-### 2. Redis 상품 피드 캐시
+새 개발 DB에서 처음 실행할 때 저장소 루트의 PowerShell에서 아래 명령을 한 줄씩 실행한다. 첫 줄은 DB와 ES를 준비하고, 두 번째 줄은 상품을 생성해 최초 검색 인덱스를 채운다. 세 번째 줄로 구매 화면을 시작한다.
 
-- 페이지 크기가 12이고 페이지 번호가 0~2이면 모든 필터 조합의 결과를 Redis에 저장합니다. 검색어 `Nike`와 `nike`는 같은 키를 공유합니다. 브랜드 필터는 정확히 일치하는 값을 검색하므로 대소문자를 구분합니다. 상품을 변경하면 각 피드는 만료 후 첫 조회에서 갱신됩니다.
-- 기본 TTL은 저장할 때마다 30~60초 사이에서 무작위로 정합니다. 목록에 이전 가격이나 삭제된 상품이 잠시 보일 수 있습니다. 상품 상세는 PostgreSQL에서 조회하고 주문 가능 재고는 주문 트랜잭션에서 확인합니다.
-- 피드 응답은 `JavaTimeModule`을 등록한 JSON 직렬화기로 저장해 `OffsetDateTime`을 보존합니다.
-- 기존 측정 기록은 캐시 적중률 95%, 최대 6,350 RPS, 5,000 RPS에서 p99 약 200ms입니다. 새 키와 만료 정책의 적중률 및 지연은 같은 요청 분포에서 다시 측정해야 합니다. [k6 측정 방법](docs/K6_SCENARIOS.md#같은-피드로-캐시-효과-비교)
+```powershell
+docker compose up -d --wait postgres elasticsearch
+docker compose run --build --rm --no-deps backend --spring.profiles.active=reindex --recreate-index
+docker compose up -d --build frontend
+```
 
-### 3. 고동시성 환경의 주문/결제 무결성 보장
+이후 같은 볼륨을 사용할 때는 세 번째 명령으로 시작한다. 주문과 상품 변경은 Outbox가 ES에 반영한다. [구매 화면](http://localhost:5173) / [API 문서](http://localhost:8080/swagger-ui.html)
 
-- 
-    
-    `SELECT FOR UPDATE` 쿼리를 통한 비관적 락(Pessimistic Lock)으로 동시 접근에 의한 재고 감소 누락을 방지했습니다.
-    
-- 트랜잭션 대기로 인한 커넥션 풀 고갈을 식별하고 HikariCP 풀을 조정하여 전체 주문 최대 3100 TPS를 달성했습니다.
-- UUID 기반의 멱등성 키와 회원 ID의 복합 유니크 인덱스를 설계하여 이중 결제를 차단했습니다.
-- 주문 생성은 한 트랜잭션에서 기존 주문을 먼저 조회합니다. 신규 주문이면 회원을 확인한 뒤 상품을 잠그고 주문과 재고 차감, Outbox 기록을 함께 커밋합니다. 동시 요청이 멱등성 키 충돌이나 재고 부족으로 롤백되면 트랜잭션 밖에서 해당 회원의 주문을 다시 확인합니다. [트랜잭션 설계](docs/ARCHITECTURE_REVIEW_AND_IMPROVEMENTS.md#21-주문-생성과-중복-요청-복구의-트랜잭션-경계)
-- 중복 요청 부하 테스트에서도 2566 TPS를 안정적으로 달성했습니다.
-
-### 4. 데이터 기반 모니터링 인프라 구축
-
-- GitHub Actions를 통해 PR 및 Push 발생 시 병렬 빌드 및 테스트를 실행하는 자동화 파이프라인을 구축했습니다.
-- Docker Compose로 백엔드, Next.js 프론트엔드, DB를 묶어 오케스트레이션 환경을 구성했습니다.
-- Spring Boot Actuator, Prometheus, Grafana를 연동하여 JVM Heap, DB 커넥션, API 지연율 등을 실시간 추적했습니다.
-
-## 🚀 Getting Started
-
-**1. Clone the repository**
-
-> `git clone https://github.com/사용자계정/리포지토리이름.git`
-> 
-> 
-> `cd 리포지토리이름`
-> 
-
-**2. Run with Docker Compose**
-
-> 
-> 
-> 
-> `docker compose up --build` 
-> 
-
-**3. Access the Services**
-
-- Frontend: `http://localhost:5173`
-- Backend API: `http://localhost:8080`
-- Swagger UI: `http://localhost:8080/swagger-ui.html`
+별도 임시 환경에서 재색인, 캐시 적중과 장애 우회, 주문 후 ES 복구를 함께 검증하는 PowerShell 명령은 `.\scripts\verify\run-commerce-smoke.ps1`이다. 실제 브라우저 검사는 [프론트 실행 절차](frontend/README.md)를 따른다.
 
 ## 검색과 주문의 공용 더미 데이터
 
-새 DB의 기본 실험 규모는 **SKU 10,000,000개, 모델 2,500,000개, 회원 100,000명**입니다. 주문 수는 수요와 가용 재고에 따라 결정됩니다. [B9 카탈로그 생성 SQL](backend/src/main/resources/db/migration/B9__realistic_commerce_catalog.sql)
+대용량 프로필의 실험 규모는 **SKU 10,000,000개, 모델 2,500,000개, 회원 100,000명**입니다. 주문 수는 수요와 가용 재고에 따라 결정됩니다. [B9 카탈로그 생성 SQL](backend/src/main/resources/db/migration/B9__realistic_commerce_catalog.sql)
 
 ### 1,000만 건 환경
 
@@ -142,7 +93,7 @@ docker compose logs -f backend
 
 [재색인 스크립트](scripts/elasticsearch/run-reindex-products.ps1)는 PostgreSQL `products`의 모든 상품을 ID 순으로 읽어 Elasticsearch의 `products` 인덱스에 같은 ID로 저장합니다. `-RecreateIndex`는 검색 API가 사용하는 해당 인덱스를 삭제하고 매핑부터 다시 만듭니다. 비교에는 검색 트래픽이 없는 환경을 사용하고, 마지막 검증까지 상품 등록과 수정, 삭제, 주문에 의한 재고 변경을 멈춰 원본을 고정합니다.
 
-상품 등록, 수정, 삭제와 주문 생성 시 재고 차감은 트랜잭셔널 Outbox를 통해 검색에 반영됩니다. 전체 재색인 동안에는 ES에 쓰는 워커도 멈춰 있어야 합니다. 백엔드를 계속 실행한다면 상품 쓰기와 신규 주문을 중지한 뒤 Outbox가 비고 진행 중인 Bulk 요청이 끝났는지 확인합니다. 백엔드를 정지한 상태라면 대기 중인 변경은 재색인 후 백엔드를 시작할 때 반영됩니다. `reindex` 프로필 자체는 Outbox 워커를 실행하지 않습니다. [상품 변경의 검색 반영](docs/IMPROVEMENT_LOG.md#상품-변경의-검색-반영)
+상품 등록, 수정, 삭제와 주문 재고 변경은 Outbox를 통해 검색에 반영됩니다. 오프라인 재색인 전에는 쓰기 요청을 중지하고 Outbox 처리와 ES로 이미 전송한 Bulk 요청이 끝날 때까지 기다린 뒤 백엔드를 정지합니다. 재색인은 상품과 Outbox의 쓰기 잠금을 즉시 얻을 수 없거나 처리 중인 임대가 남아 있으면 중단됩니다. 중단된 워커의 임대가 남았다면 백엔드를 다시 시작해 해당 작업이 처리된 뒤 재시도합니다. `reindex` 프로필 자체는 Outbox 워커를 실행하지 않습니다. [상품 변경의 검색 반영](docs/IMPROVEMENT_LOG.md#상품-변경의-검색-반영)
 
 아래 PowerShell 명령은 배치당 5,000건으로 고정하고 작업자 수만 바꿉니다. `0`은 DB 읽기와 ES 쓰기를 순차로 실행하는 기준값입니다. `1`은 다음 배치를 읽는 동안 직전 배치를 ES에 쓰며, `2`, `4`, `8`은 동시에 ES에 쓰는 작업자를 늘립니다. 인수를 생략하면 Spring 설정을 사용하며 기본값은 작업자 1개와 배치당 5,000건입니다.
 
@@ -155,7 +106,7 @@ foreach ($workers in 0, 1, 2, 4, 8) {
 
 - **시간 비교** 같은 DB와 서버 자원으로 예열한 뒤 실행 순서를 바꾸어 반복합니다. 인덱스를 재생성한 뒤에도 PostgreSQL과 운영체제의 읽기 캐시가 남을 수 있습니다. 최초 실행과 예열 후 실행을 구분해 전체 경과 시간과 초당 문서 수를 기록합니다.
 - **병목 확인** 재색인 로그의 DB 조회 및 행 매핑 누적 시간, ES bulk 요청 누적 시간, 마지막 refresh 시간, 전체 경과 시간을 비교합니다. 작업자들이 보낸 요청은 동시에 진행될 수 있어 누적 시간의 합은 전체 경과 시간을 초과할 수 있습니다. 작업자를 늘렸을 때 실제 완료 시간이 줄었는지는 동일 조건의 측정으로 판단합니다.
-- **결과 확인** 재색인은 원본 건수와 성공한 문서 수를 대조하고 최종 refresh 후 같은 ES 연결에서 문서 수(`targetDocuments`)를 읽습니다. 재생성한 인덱스의 건수가 다르면 작업이 실패합니다. 기존 인덱스에 추가 문서가 있으면 경고를 기록합니다. 내용 검증은 몇 개의 실제 상품 ID에 대해 `GET /products/_doc/{id}`의 상품명, 가격, 재고를 PostgreSQL과 대조합니다.
+- **결과 확인** 재색인은 작업 동안 상품과 Outbox 쓰기를 잠그고 최종 refresh 후 삭제 표시를 제외한 문서 수를 원본과 대조합니다. 재생성한 인덱스의 건수가 다르면 작업이 실패합니다. 기존 인덱스의 추가 문서는 경고를 기록합니다. ID 범위에서 뽑은 최대 5개 상품의 가격, 재고, 날짜를 포함한 검색 필드도 자동으로 대조합니다.
 - **중단 후 재실행** 실패 직전까지 저장된 배치가 대상 인덱스에 남을 수 있습니다. 원본을 고정한 상태에서 `-RecreateIndex`로 처음부터 다시 적재하고 검증합니다. 옵션을 생략하면 같은 ID의 문서를 갱신하며, 현재 DB에 없는 과거 문서는 인덱스에 남을 수 있습니다.
 
 ### 기존 상품에서 주문 대상 추출

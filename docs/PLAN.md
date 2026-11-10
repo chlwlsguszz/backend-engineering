@@ -2,12 +2,26 @@
 
 2026-11-10 작업 트리 기준. 포트폴리오에서 증명할 대상은 **1,000만 상품을 탐색하고, 하나의 SKU를 주문하고, 그 결과가 PostgreSQL 재고와 검색에 일관되게 반영되는 과정**이다. 이 문서에서 작업 순서와 완료 조건을 관리한다. 완료된 변경과 실측 수치는 [개선 기록](IMPROVEMENT_LOG.md), 재현 절차는 [k6 시나리오](K6_SCENARIOS.md)에 남긴다.
 
-## 현재 기준선
+## 실행 현황
+
+2026-11-10 로컬 검증에서 Gradle 테스트 88개가 모두 통과했다. 생략된 테스트는 0개였으며 CI의 필수 통합 테스트 보고서 검사도 통과했다. 프론트 lint, 프로덕션 빌드, Chromium 테스트 5개가 통과했다. 별도 Docker 환경에서 캐시 우회, ES 복구와 주문 재고 대사를 실행했다. [개선별 실측](IMPROVEMENT_LOG.md)
+
+- **주문과 재고.** 단가 반환을 포함한 조건부 재고 갱신, 수량 차이 반영, 취소 후 멱등성 유지, 관리자 변경 충돌 방지를 적용했다. 기존 주문은 V11 적용 당시 수량을 최초 요청 비교에 사용한다. 한 상품에 집중되는 SQL 비교와 1,000개에 분산되는 비교를 짧게 수행했다. [주문 정책과 측정값](ORDER_INVENTORY.md)
+- **목록과 검색.** 주문과 회원은 ID 커서로 다음 페이지를 읽고, 상품은 PG와 ES에서 같은 시작 위치로 최대 한 건 더 읽는다. 검색 조건 정규화, 캐시 키, 저장소별 검색 방식의 차이를 코드와 OpenAPI에 반영했다. [PG 및 ES 계약 검사](../backend/src/test/java/com/marketengine/backend/product/infrastructure/search/ProductSearchContractIntegrationTest.java)
+- **브라우저와 CI.** 주문 응답 유실 후 새로고침, 새 구매, 품절, 판매 중단, 필터 변경과 다음 페이지 실패를 브라우저에서 검사한다. CI는 필수 통합 테스트가 Docker 부재로 생략돼도 실패하도록 설정했다. [브라우저 검사](../frontend/README.md) / [CI](../.github/workflows/ci.yml)
+- **데이터와 검색 운영.** 개발 기본값은 SKU 1,000개이며 빈 스키마, 10만 및 1,000만 건 환경을 선택할 수 있다. 재색인은 원본 쓰기를 잠그고 건수와 표본 필드를 대조한다. Outbox는 대기 수, 최장 대기 시간, 성공과 실패 횟수를 노출한다. [데이터 구성](DUMMY_DATA_DESIGN.md) / [격리 운영 검사](../scripts/verify/run-commerce-smoke.ps1)
+- **실험과 접근 범위.** Grafana 주문 지표에는 HTTP 성공 응답임을 표시하고, 주문 부하 기록에는 실행 키로 DB를 조회한 신규 주문 수와 재고 차이를 남긴다. 공개 범위는 루프백 로컬 데모로 정했다. [실험 절차](K6_SCENARIOS.md)
+
+최대 HTTP TPS 재측정은 별도 부하 실험으로 남겼다. 멱등성 키 전용 락, 깊은 상품 검색 커서, Kafka, 온라인 재색인, 외부 서비스 인증은 아래에 적은 도입 조건이 생기면 다시 판단한다.
+
+## 계획 수립 당시의 기준선
 
 - **데이터.** B9의 10만 건과 1,000만 건 카탈로그에서 분포와 재고 대사를 수행했다. 1,000만 SKU 환경의 시드 시점 회원은 100,000명, 주문은 126,373건이다. 검색과 주문은 같은 상품을 사용한다. [데이터 설계](DUMMY_DATA_DESIGN.md)
 - **주문.** 멱등성 선조회와 회원 조회를 주문 쓰기 트랜잭션으로 옮겨 신규 주문의 HikariCP 대여를 3회에서 1회로 줄였다. 같은 주문의 재시도도 1회다. PostgreSQL의 오류 코드, 테이블, 인덱스 이름으로 중복을 식별하며, 마지막 재고에 대한 동시 중복 요청도 같은 주문 ID를 반환한다. [주문 생성](../backend/src/main/java/com/marketengine/backend/order/application/OrderCreateExecutor.java)과 [검증 기록](IMPROVEMENT_LOG.md)
 - **검색 반영.** 상품 변경 및 신규 주문에 의한 재고 차감은 트랜잭셔널 Outbox가 ES에 반영한다. 피드는 정규화된 키와 기본 30~60초 TTL을 사용한다. 전체 재색인은 별도의 오프라인 작업이다. [Outbox 워커](../backend/src/main/java/com/marketengine/backend/product/infrastructure/search/ProductOutboxWorker.java)와 [재색인 구현](../backend/src/main/java/com/marketengine/backend/product/infrastructure/search/ProductBulkReindexer.java)
 - **중복 경합.** 20 POST/s, 조건별 20초 실험에서 전체 POST의 20%를 중복 전송하자 인덱스 충돌 80건이 발생했다. 다른 상품의 독립 주문 p95는 5.30ms에서 6.17ms로 바뀌었다. Hikari 대기 스레드는 조건당 4개 표본에서 모두 0이었다. 이 결과는 해당 부하 구간에 한정한다. [실험 조건과 결과](K6_SCENARIOS.md#2026-11-10-실측-결과)
+
+아래는 변경 전 코드에서 잡은 작업 순서와 검증 기준이다.
 
 ## 1순위 | 주문 화면과 재고 정합성
 

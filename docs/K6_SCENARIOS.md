@@ -18,10 +18,12 @@ Invoke-RestMethod 'http://localhost:9200/products/_count' -Method Post -ContentT
 k6 run -e CASE=pagination scripts/k6/search_scenarios.js
 ```
 
-- **페이지 경계 (`pagination`).** `StudioCapsule`을 최신순과 인기순으로 각각 조회한다. 상품 13개가 첫 페이지 12개와 다음 페이지 1개로 나뉘고 두 페이지에서 ID 1~13이 정확히 한 번씩 나와야 한다. 현재 ES 구현은 페이지 시작 위치까지 `size + 1`로 계산한다. 이 검사에서 실패하면 누락 문제를 먼저 재현하고, 수정 뒤 같은 명령으로 확인한다.
+- **페이지 경계 (`pagination`).** `StudioCapsule`을 최신순과 인기순으로 각각 조회한다. 상품 13개가 첫 페이지 12개와 다음 페이지 1개로 나뉘고 두 페이지에서 ID 1~13이 정확히 한 번씩 나와야 한다. PG와 ES 모두 `page × size`에서 시작해 최대 `size + 1`개를 읽는다. 한 건 더 읽은 결과로 다음 페이지 유무를 판단한다.
 - **인기 피드 (`feed`).** 짧은 간격으로 같은 홈과 카테고리 목록을 요청한다. 캐시 ON/OFF 두 실행에 같은 입력과 도착률을 사용해 Redis가 ES 호출을 얼마나 줄이는지 본다.
 - **검색어별 결과 (`discovery`).** 넓게 매칭되는 검색어, 존재하는 모델 코드, 의도적으로 없는 코드를 구분한다. 응답 시간은 검색 종류별로 비교한다. 결과가 드문 키워드도 같은 페이지를 다시 요청하면 캐시에 적중할 수 있다.
 - **연속 탐색 (`browse`).** 한 사용자가 같은 조건에서 다음 페이지로 이동한다. 응답의 `hasNext`가 거짓이면 중단한다. `page=0..2`와 `page>=3`의 지연을 나눠 본다. 기본 크기 12에서 3페이지부터는 애플리케이션의 피드 캐시를 우회한다.
+
+PG의 상품명 검색은 대소문자를 정규화한 부분 문자열, ES는 분석한 토큰을 사용한다. 최신순에서 PostgreSQL은 원본 시각, 기존 ES `date` 매핑은 밀리초로 정렬하고 각 저장소에서 동점이면 ID가 큰 상품이 먼저다. 생성 시각이 같은 밀리초 안에서만 다른 상품은 양쪽의 상대 순서가 달라질 수 있다. 페이지 경계 실험은 고정된 카탈로그와 한 저장소에서 이어지는 페이지를 사용한다.
 
 ```powershell
 k6 run -e CASE=feed -e RATE=5 -e DURATION=30s scripts/k6/search_scenarios.js
@@ -32,6 +34,8 @@ k6 run -e CASE=browse -e RATE=5 -e DURATION=30s -e MAX_PAGE=8 scripts/k6/search_
 `RATE`는 초당 시작하는 탐색 세션 수다. 연속 탐색은 한 세션에서 여러 번 요청하므로 실제 HTTP 처리량은 k6의 `http_reqs`로 읽는다. 10만 건 파일럿에서 `discovery`를 실행할 때는 `-e MODEL_COUNT=25000`을 추가한다. [검색 스크립트](../scripts/k6/search_scenarios.js)
 
 ### 같은 피드로 캐시 효과 비교
+
+**1,000 SKU에서 확인한 호출 수.** 격리된 단일 샤드에서 홈, 카테고리 TOP, 모델 코드 ME0000001, 3페이지를 각각 21회 호출했다. Redis를 켜면 앞의 세 조건은 첫 요청만 ES로 갔고, 3페이지는 21회 모두 ES로 갔다. 끄면 네 조건 모두 21회씩 ES로 갔다. 홈의 첫 요청은 ON 348ms, OFF 302ms였고 이어진 20회에서 관측한 p95는 각각 14.49ms, 31.87ms였다. 이 값에는 로컬 HTTP 클라이언트 시간이 포함된다. 도착률 한계나 1,000만 SKU 지연을 추정하기에는 표본이 작다. [격리 검증 명령](../scripts/verify/run-commerce-smoke.ps1)
 
 아래 두 블록을 순서대로 사용한다. 백엔드를 재생성할 때마다 `/actuator/health`가 `UP`이 된 후 k6를 실행한다. 각 조건에서 같은 짧은 예열을 한 번 하고 두 번째 실행을 기록한다. 캐시 ON 조건에서는 기존 Redis 키도 재사용될 수 있으므로 예열 여부를 기록한다.
 
@@ -56,7 +60,7 @@ k6 run -e CASE=feed scripts/k6/search_scenarios.js
 현재 피드 키의 TTL은 기본 30~60초다. 예열한 키도 측정 도중 만료될 수 있으므로 결과에 TTL 설정을 함께 기록한다. 캐시를 켠 실험 DB에서 필터 없이 최신순 첫 페이지(`page=0`, `size=12`)를 조회한 직후 아래 한 줄로 남은 시간을 밀리초 단위로 확인한다.
 
 ```powershell
-docker compose exec -T redis redis-cli PTTL 'productListFeed:v2::feed:q1?cat=&brand=&gender=&color=&min=&max=&kw=&sort=LATEST&page=0&size=12'
+docker compose exec -T redis redis-cli PTTL 'productListFeed:v3:elasticsearch::feed:q2?cat=&brand=&gender=&color=&min=&max=&kw=&sort=LATEST&page=0&size=12'
 ```
 
 상품 수정의 영향을 확인하려면, 양수인 키의 TTL을 기록하고 다른 상품 하나를 수정한 직후 피드를 다시 조회하기 전에 같은 키를 확인한다. 자연 만료 전이라면 키는 남아 있고 TTL은 경과한 만큼 줄어든다.
@@ -194,7 +198,7 @@ $env:COMPOSE_PROJECT_NAME='marketengine-catalog-10m'; docker compose up -d prome
 
 **재고 조건.** 같은 `order-targets.json`을 두 실행에 사용한다. 대상 선정에는 서로 다른 주문만 보내는 조건의 두 실행분을 잡는다. 예를 들어 기본 인기 SKU 하나의 재고 예산은 실행당 36개이므로 내보낸 재고가 72개 이상인 후보에서 선정한다. 매 실행 직전에 예정된 각 SKU의 실제 재고가 한 실행분 이상인지 확인하고, `k6.log`에 SKU별 시작 재고와 필요 수량을 남긴다. 재고가 충분하면 두 명령을 연속 실행할 수 있다. 같은 시작 재고와 주문 수에서 엄밀히 비교하려면 동일한 실험용 스냅샷으로 조건별 실행을 시작한다. 시간이나 도착률을 바꿀 때는 두 조건 모두 같은 `-Seconds`, `-ProbeRps`, `-PairRps`, `-HotCount`를 지정한다.
 
-**어떻게 판정하는가.** 각 실행은 출력한 `%TEMP%\k6-order-contention-...` 폴더에 설정과 대상 파일 해시(`settings.json`), 콘솔 로그(`k6.log`), k6 집계(`k6-summary.json`), Hikari 원본 표본(`hikari.csv`)을 남긴다.
+**어떻게 판정하는가.** 각 실행은 출력한 `%TEMP%\k6-order-contention-...` 폴더에 설정과 대상 파일 해시(`settings.json`), 콘솔 로그(`k6.log`), k6 집계(`k6-summary.json`), Hikari 원본 표본(`hikari.csv`)을 남긴다. `db-orders.json`에서는 실행 키로 확인한 실제 신규 주문 수와 시작 재고 대비 차감 수량을 확인한다. 상품 재고 대사를 위해 사용하는 SKU는 실행 동안 다른 주문이나 관리자 변경에서 제외한다.
 
 - 먼저 계획한 POST 수와 실제 `http_reqs{scenario:probe}` 및 `http_reqs{scenario:pairs}`의 합이 일치하고, 누락 반복(`dropped_iterations`), 품절, HTTP 응답 오류, 쌍별 주문 ID 불일치가 모두 0인지 확인한다. 같은 키의 두 응답은 주문 ID가 같아야 하고 서로 다른 두 키는 다른 주문이어야 한다. 실제 중복 POST 비율은 `contention_duplicate_pairs` 건수를 두 시나리오의 POST 수 합으로 나눈다. 준비 단계의 재고 조회 GET은 분모에서 제외한다.
 - `contention_hot_probe_duration`의 p95(ms)는 같은 인기 상품을 구매하는 독립 주문, `contention_normal_probe_duration`의 p95는 다른 상품을 구매하는 독립 주문의 지연이다. 기본값에서는 각각 40건이므로 반복 측정하거나 같은 재고 예산 안에서 `-Seconds`를 늘려 표본을 확보한다.
@@ -203,7 +207,7 @@ $env:COMPOSE_PROJECT_NAME='marketengine-catalog-10m'; docker compose up -d prome
 상품 잠금에서 실제로 대기 중인 세션을 보려면 부하 중 별도 PowerShell 창에서 아래 읽기 전용 쿼리를 실행한다. 실험 프로젝트 이름이 다르면 `-p` 값을 맞춘다. 결과는 실행 시점의 표본이며, `blocking_pids`는 대기를 유발한 세션을 가리킨다.
 
 ```powershell
-docker compose -p marketengine-catalog-10m exec -T postgres psql -U marketengine -d marketengine -c "SELECT pid, wait_event, pg_blocking_pids(pid) AS blocking_pids FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%products%' AND query ~* 'for[[:space:]]+(no[[:space:]]+key[[:space:]]+)?update'"
+docker compose -p marketengine-catalog-10m exec -T postgres psql -U marketengine -d marketengine -c "SELECT pid, wait_event, pg_blocking_pids(pid) AS blocking_pids FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ~* 'update[[:space:]]+products[[:space:]]+set'"
 ```
 
 #### 2026-11-10 실측 결과
@@ -217,6 +221,8 @@ docker compose -p marketengine-catalog-10m exec -T postgres psql -U marketengine
 20 POST/s에서 같은 키의 쓰기 경합은 재현됐다. 일반 상품의 p95 차이는 약 0.86ms였고 두 조건은 순차로 한 번씩 실행했다. 이 결과만으로 일반 주문 지연이 커넥션 풀을 통해 전파됐다고 판단하거나 부하 한계를 정하기는 어렵다.
 
 원본은 로컬 결과 폴더 `k6-order-contention-20261110-225005-050-39832-pct0`과 `k6-order-contention-20261110-225026-347-39832-pct50`에 있다. 앞선 예비 실행에서는 도착 구간 끝에 반복이 한 번씩 더 시작돼 POST와 주문이 403건 발생했다. 주문 전송 수를 스크립트에서 제한하고 대상 목록을 다시 내보낸 뒤 본 측정을 시작했다. 예비 실행분은 위 수치에서 제외했다.
+
+변경 후에는 SKU 1,000개의 독립 DB에서 6 POST/s를 10초간 실행했다. POST 60건 중 중복은 10건이었고 주문 50건과 재고 차감 50개를 확인했다. 대상 SKU 15개의 불일치는 0건이었다. 시작 재고를 한 상품만 1개 바꾼 음성 대조에서는 같은 대사 SQL이 불일치 1건을 검출했다. 이 실행은 대사 절차의 동작을 검증한 결과다.
 
 ### 인기 상품 경합이 일반 상품에 미치는 영향
 

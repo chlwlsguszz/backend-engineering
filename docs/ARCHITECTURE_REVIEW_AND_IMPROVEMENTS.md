@@ -1,6 +1,6 @@
 # 🔍 Market Backend Engine — 설계 결함, 과설계 및 성능/시나리오 개선 리포트
 
-> 이 문서의 시드 분석은 V4 당시의 구현을 대상으로 합니다. 현재 생성 규칙과 변경 결과는 [설계 개선 기록](IMPROVEMENT_LOG.md)에 정리했습니다.
+> 이 문서는 변경 전 코드의 진단과 실험 가설을 보존한 기록입니다. 현재 주문 규칙, 검색 계약, 검증 결과는 [실행 현황](PLAN.md)과 [설계 개선 기록](IMPROVEMENT_LOG.md)에서 확인할 수 있습니다.
 
 > **작성 목적**: 대용량 상품 검색(1,000만 건) 및 고동시성 주문/결제 시스템의 현재 구현 코드를 시니어 엔지니어/면접관 시각에서 정밀 진단하고, **설계적 결함(Design Flaws)**, **과설계(Over-engineering)**, **가상 데이터 및 부하 테스트(k6) 왜곡 요인**, **기술 스택 및 Elasticsearch 최적화 포인트**를 종합 정리한 문서입니다.
 
@@ -55,6 +55,9 @@
 ---
 
 ### 🐛 1.3 오타 검색(`kw-typo`) 기능 누락 및 빈 인덱스 500 에러
+
+현재 빈 인덱스에는 정렬용 숫자 ID 매핑을 먼저 명시한다. 빈 결과와 정렬 동점을 실제 ES에서 검증한다. 오타 교정은 검색 요구가 정해질 때 검토한다.
+
 - **관련 코드**: `ElasticsearchProductListSearcher.appendKeywordMust()`, `ProductDocument.id`
 - **문제점**:
   1. **오타 교정(`fuzziness`) 누락**: PostgreSQL(`pg_trgm`) 단계에서 테스트하던 오타 키워드(`"Nikke"`, `"Nkie"`, `"Sneeker"`)가 `search_v3.js`의 `kw-typo` 시나리오에 남아있으나, 정작 ES 검색 코드(`appendKeywordMust`)는 `fuzziness("AUTO")` 없이 단순 `match` 쿼리만 수행합니다. 그 결과 현재 `kw-typo` 요청은 전부 **검색 결과 0건(`items: []`)**을 반환하고 있습니다. (k6가 `Array.isArray(items)`만 체크하여 성공으로 집계됨)
@@ -88,6 +91,9 @@
 ---
 
 ### ⚡ 2.3 고동시성 재고 차감 쿼리 최적화 여지 (`SELECT FOR UPDATE` vs Atomic Update)
+
+현재는 조건부 UPDATE에서 주문 단가를 함께 받는다. 인기 상품의 짧은 SQL 실험에서 두 실행 순서 모두 개선됐고 분산 상품의 결과는 순서에 따라 달랐다. 아래는 도입 전 가설이다. [측정값과 조건](ORDER_INVENTORY.md)
+
 - **관련 코드**: `ProductRepository.findByIdForUpdate()`, `Product.java`
 - **문제점**:
   1. **전체 컬럼 UPDATE (`@DynamicUpdate` 미적용)**: `Product` 엔티티에 `@DynamicUpdate`가 없어 재고(`stock_quantity`) 1개만 줄어들어도 `name`, `description`, `category`, `brand` 등 모든 컬럼을 덮어쓰는 `UPDATE` 문이 실행됩니다. 이는 PostgreSQL의 **HOT(Heap-Only Tuple) 업데이트** 최적화를 방해하고 WAL 크기를 키웁니다.
@@ -103,6 +109,9 @@
 ---
 
 ### 🐛 2.4 주문 수정/삭제 시 재고 미복구 및 전체 조회(`findAll`) OOM 위험
+
+현재 수정은 수량 차이를 반영하고 취소는 한 번만 복원한다. 목록은 ID 커서와 상한을 사용하며 주문 10만 건에서 페이지당 SELECT 한 번을 검증했다. 아래는 변경 전 진단이다. [주문 및 회원 목록 검증](../backend/src/test/java/com/marketengine/backend/order/application/DirectoryPageIntegrationTest.java)
+
 - **관련 코드**: `OrderService.update()`, `OrderService.delete()`, `OrderService.list()`
 - **문제점**:
   1. **재고 정합성 파손**: 주문 생성 시에는 비관적 락으로 엄격하게 재고를 차감하면서, 정작 주문 수량 변경(`update`)이나 주문 삭제/취소(`delete`) 시에는 상품 재고를 복원하거나 가감하는 로직이 전혀 없습니다.
