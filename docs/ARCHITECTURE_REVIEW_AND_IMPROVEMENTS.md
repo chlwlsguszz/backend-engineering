@@ -13,7 +13,7 @@
 4. [가상 데이터(Seed Data) 및 k6 부하 테스트 시나리오의 비현실성](#4-가상-데이터seed-data-및-k6-부하-테스트-시나리오의-비현실성)
 5. [기술 스택 타당성 및 보완 포인트](#5-기술-스택-타당성-및-보완-포인트)
 6. [Elasticsearch 정렬(`doc_values` vs `Index Sorting`) 심층 분석](#6-elasticsearch-정렬doc_values-vs-index-sorting-심층-분석)
-7. [우선순위별 개선 로드맵 (Action Items)](#7-우선순위별-개선-로드맵-action-items)
+7. [최초 설계 리뷰의 제안과 반영 이력](#7-최초-설계-리뷰의-제안과-반영-이력)
 
 ---
 
@@ -79,19 +79,11 @@
 
 ---
 
-### 🚨 2.2 취약한 멱등성 예외 판별 방식 및 중복 요청의 상품 락 대기
-- **관련 코드**: `OrderService.isIdempotencyKeyViolation()`
-- **현상**:
-  ```java
-  private boolean isIdempotencyKeyViolation(DataIntegrityViolationException ex) {
-      Throwable cause = ex.getMostSpecificCause();
-      String message = cause != null ? cause.getMessage() : ex.getMessage();
-      return message != null && message.toLowerCase().contains("idempotency");
-  }
-  ```
-- **문제점**:
-  1. **에러 메시지 문자열 의존**: DB 버전, 로케일, 드라이버 설정에 따라 에러 메시지 포맷이 달라지면 깨질 수 있습니다. Hibernate `ConstraintViolationException#getConstraintName()` 또는 PostgreSQL SQLState(`"23505"`, `unique_violation`) 코드로 검증하는 것이 안전합니다.
-  2. **동시 중복 요청 시 불필요한 상품 락 경합**: 동일 유저가 따닥(동시 중복 요청)을 발생시켰을 때, 두 번째 요청도 `SELECT ... FOR UPDATE`로 인기 상품의 Row Lock 대기열에 줄을 서서 기다린 뒤에야 `INSERT` 시점에 Unique 제약조건으로 롤백됩니다.
+### 2.2 멱등성 인덱스 오류 판별과 동시 중복 요청의 락 대기
+
+주문 오류의 원인 체인에서 PostgreSQL 서버가 반환한 SQLSTATE, 테이블, 제약 이름을 확인한다. `23505`, `orders`, `uk_orders_member_idempotency_key` 세 값이 모두 맞아야 멱등성 복구를 시도한다. 실제 PostgreSQL 16 유니크 위반으로 복구 및 오류 전파를 검증했다. [판별 코드](../backend/src/main/java/com/marketengine/backend/order/application/OrderService.java)
+
+이미 커밋된 주문의 재시도는 선조회에서 끝난다. 같은 키의 동시 요청이 모두 선조회를 통과하면 양쪽 모두 상품 락을 기다릴 수 있다. 후발 요청은 남은 재고에 따라 재고 부족 또는 주문 INSERT 유니크 위반을 거쳐 기존 주문을 반환한다. 중복 비율이 일반 주문 지연과 커넥션 풀 대기에 미치는 영향은 별도 부하 실험으로 측정한다. [부하 실험 절차](K6_SCENARIOS.md)
 
 ---
 
@@ -200,14 +192,16 @@
 
 ---
 
-## 7. 우선순위별 개선 로드맵 (Action Items)
+## 7. 최초 설계 리뷰의 제안과 반영 이력
+
+아래 목록은 리뷰 당시의 제안과 반영 이력이다. 현재의 작업 순서, 실험 채택 조건과 완료 기준은 [프로젝트 개선 계획](PLAN.md)에서 관리한다.
 
 ### 🔥 Priority 1: 코드 결함 및 과설계 즉시 수정 (가성비 최고 / 면접 방어 필수)
 - [x] `ProductListFeedKeyResolver`의 필터 조합별 분기를 제거하고 검색 의미에 맞춰 정규화한 공통 키 적용
 - [x] `ProductService`에서 상품 변경 시 피드 캐시 전체 삭제를 제거하고 항목별 TTL 적용
 - [ ] `ProductDocument.id`에 `@Field(type = FieldType.Long)` 명시 및 `ElasticsearchProductListSearcher` 키워드 검색에 `fuzziness` 옵션 추가
 - [x] 기존 주문 조회와 회원 조회를 `OrderCreateExecutor`의 주문 쓰기 트랜잭션에 통합
-- [ ] `isIdempotencyKeyViolation`에서 주문 멱등성 유니크 제약을 정확히 식별
+- [x] PostgreSQL 오류 코드와 서버가 보고한 테이블, 제약 이름으로 주문 멱등성 인덱스 식별
 - [ ] `OrderService.update/delete` 재고 증감 반영 및 `OrderService.list()` 페이징 적용
 - [x] `RequestResponseLoggingFilter`에서 느린 응답과 오류를 선별하고 요청 ID 생성 비용 축소
 - [x] `hibernate.format_sql: false`를 명시하고 SQL 출력 조건 확인

@@ -176,7 +176,47 @@ k6 run -e CASE=burst scripts/k6/order_idempotency.js
 k6 run -e CASE=last-unit scripts/k6/order_idempotency.js
 ```
 
-`replay`는 응답 이후 재전송, `burst`는 동시 제출, `last-unit`은 재고가 정확히 한 개인 상품의 동시 제출이다. 통과하려면 모든 요청이 같은 유효한 주문 ID를 받고, 해당 회원과 키로 DB 주문이 한 건이어야 하며, 실제 재고는 한 개만 줄어야 한다. k6가 출력하는 읽기 전용 SQL 확인 명령까지 실행한다. 마지막 한 개 조건에서 후보가 없으면 다른 추출 시드를 사용한다. 현재 주문 코드는 큰 상품 ID의 동일성 비교와 마지막 한 개의 주문 처리 순서 때문에 이 검사에서 실패할 수 있다. [멱등성 스크립트](../scripts/k6/order_idempotency.js)
+`replay`는 응답 이후 재전송, `burst`는 동시 제출, `last-unit`은 재고가 정확히 한 개인 상품의 동시 제출이다. 통과하려면 모든 요청이 같은 유효한 주문 ID를 받고, 해당 회원과 키로 DB 주문이 한 건이어야 하며, 실제 재고는 한 개만 줄어야 한다. k6가 출력하는 읽기 전용 SQL 확인 명령까지 실행한다. 마지막 한 개 조건에서 후보가 없으면 다른 추출 시드를 사용한다. [멱등성 스크립트](../scripts/k6/order_idempotency.js)
+
+### 동시 중복 요청이 다른 구매자의 주문을 늦추는가
+
+Windows가 기본 포트 9090을 예약한 장비에서는 아래 준비 명령 전에 `$env:PROMETHEUS_HOST_PORT='19090'`을 설정한다. 실행 스크립트는 Compose가 실제로 공개한 포트에서 HikariCP 표본을 수집한다.
+
+수정한 백엔드가 실행 중인 B9 실험 환경에서 PowerShell로 아래 세 줄을 차례로 실행한다. 첫 줄은 같은 Compose 프로젝트에서 Prometheus를 시작하고 대상 목록을 한 번 내보낸다. 파일럿을 사용한다면 프로젝트 이름을 `marketengine-catalog-pilot`으로 바꾼다. 실행 스크립트는 Prometheus가 `backend:8080`의 Hikari 메트릭을 수집하기 시작한 뒤 부하를 보낸다. [Prometheus 수집 대상](http://localhost:9090/targets)
+
+```powershell
+$env:COMPOSE_PROJECT_NAME='marketengine-catalog-10m'; docker compose up -d prometheus; if ($LASTEXITCODE -ne 0) { throw 'Prometheus 시작 실패' }; .\scripts\sql\run-seed-order-products.ps1 -Seed 42 -Count 1000
+.\scripts\k6\run-order-duplicate-contention.ps1 -DuplicatePairPct 0
+.\scripts\k6\run-order-duplicate-contention.ps1 -DuplicatePairPct 50
+```
+
+**무엇을 고정하는가.** 기본값은 20초 동안 초당 단독 주문 4건과 인기 상품에 대한 동시 주문 8쌍, 총 20 POST/s다. 두 조건에서 같은 순서로 회원과 상품을 고른다. 단독 주문의 절반은 인기 상품, 절반은 그 밖의 상품으로 보낸다. 0%에서는 모든 쌍이 같은 회원과 상품에 서로 다른 키 두 개를 사용한다. 50%에서는 절반의 쌍이 키를 공유한다. 기본값 기준 예정 POST 400건 중 중복 전송은 80건(20%)이다. 중복이 늘면 신규 주문 수와 재고 쓰기 수도 줄어든다. k6는 쌍을 병렬 전송하지만 실제 처리 시점에 따라 첫 번째 주문이 먼저 커밋되어 두 번째 요청이 선조회에서 종료될 수 있다. [부하 스크립트](../scripts/k6/order_duplicate_contention.js)
+
+**재고 조건.** 같은 `order-targets.json`을 두 실행에 사용한다. 대상 선정에는 서로 다른 주문만 보내는 조건의 두 실행분을 잡는다. 예를 들어 기본 인기 SKU 하나의 재고 예산은 실행당 36개이므로 내보낸 재고가 72개 이상인 후보에서 선정한다. 매 실행 직전에 예정된 각 SKU의 실제 재고가 한 실행분 이상인지 확인하고, `k6.log`에 SKU별 시작 재고와 필요 수량을 남긴다. 재고가 충분하면 두 명령을 연속 실행할 수 있다. 같은 시작 재고와 주문 수에서 엄밀히 비교하려면 동일한 실험용 스냅샷으로 조건별 실행을 시작한다. 시간이나 도착률을 바꿀 때는 두 조건 모두 같은 `-Seconds`, `-ProbeRps`, `-PairRps`, `-HotCount`를 지정한다.
+
+**어떻게 판정하는가.** 각 실행은 출력한 `%TEMP%\k6-order-contention-...` 폴더에 설정과 대상 파일 해시(`settings.json`), 콘솔 로그(`k6.log`), k6 집계(`k6-summary.json`), Hikari 원본 표본(`hikari.csv`)을 남긴다.
+
+- 먼저 계획한 POST 수와 실제 `http_reqs{scenario:probe}` 및 `http_reqs{scenario:pairs}`의 합이 일치하고, 누락 반복(`dropped_iterations`), 품절, HTTP 응답 오류, 쌍별 주문 ID 불일치가 모두 0인지 확인한다. 같은 키의 두 응답은 주문 ID가 같아야 하고 서로 다른 두 키는 다른 주문이어야 한다. 실제 중복 POST 비율은 `contention_duplicate_pairs` 건수를 두 시나리오의 POST 수 합으로 나눈다. 준비 단계의 재고 조회 GET은 분모에서 제외한다.
+- `contention_hot_probe_duration`의 p95(ms)는 같은 인기 상품을 구매하는 독립 주문, `contention_normal_probe_duration`의 p95는 다른 상품을 구매하는 독립 주문의 지연이다. 기본값에서는 각각 40건이므로 반복 측정하거나 같은 재고 예산 안에서 `-Seconds`를 늘려 표본을 확보한다.
+- `hikari.csv`의 `hikaricp_connections_pending`은 DB 커넥션을 빌리려고 기다리는 스레드 수다. 스크립트는 실제 k6 도착 구간의 표본만 Prometheus에서 읽어 풀별 관측 최댓값을 출력한다. 같은 시각의 `active` 및 `max`와 비교한다. 인기 상품 p95만 상승하면 상품 잠금 대기를 살펴보고, 다른 상품 p95와 풀 대기까지 함께 증가하면 다른 주문으로 지연이 퍼지는지 확인한다. 수집 간격은 5초이므로 짧은 피크가 표본 사이에서 지나갈 수 있다. Outbox 워커도 같은 풀을 사용한다. [수집 설정](../observability/prometheus.yml)과 [실행 스크립트](../scripts/k6/run-order-duplicate-contention.ps1)
+
+상품 잠금에서 실제로 대기 중인 세션을 보려면 부하 중 별도 PowerShell 창에서 아래 읽기 전용 쿼리를 실행한다. 실험 프로젝트 이름이 다르면 `-p` 값을 맞춘다. 결과는 실행 시점의 표본이며, `blocking_pids`는 대기를 유발한 세션을 가리킨다.
+
+```powershell
+docker compose -p marketengine-catalog-10m exec -T postgres psql -U marketengine -d marketengine -c "SELECT pid, wait_event, pg_blocking_pids(pid) AS blocking_pids FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%products%' AND query ~* 'for[[:space:]]+(no[[:space:]]+key[[:space:]]+)?update'"
+```
+
+#### 2026-11-10 실측 결과
+
+1,000만 상품 실험 DB에서 22:50 KST에 기준 조건과 중복 조건을 각각 20초 동안 한 번씩 실행했다. 두 실행은 같은 대상을 같은 순서로 사용했다. 인기 상품 10개에 독립 주문 40건, 그 밖의 상품 40개에 독립 주문 40건, 인기 상품에 동시 주문 160쌍으로 조건별 POST 400건을 보냈다. 시작 재고 확인 GET은 조건별 50건이다.
+
+- **중복 쌍 0%.** 신규 주문 400건. 인기 상품에 보낸 독립 주문의 p95는 7.64ms, 그 밖의 상품은 5.30ms였다.
+- **중복 쌍 50%.** 신규 주문 320건. 인기 상품 독립 주문 p95는 6.82ms, 그 밖의 상품은 6.17ms였다. 전체 POST의 20%에 해당하는 중복 전송 80건 모두 백엔드 로그에서 서로 다른 키의 멱등성 인덱스 충돌로 확인됐다.
+- **정합성과 커넥션 풀.** 두 실행 모두 HTTP 오류, 누락 반복, 품절, 주문 ID 불일치가 0건이었다. PostgreSQL에서 본 측정의 주문 720건과 50개 상품의 재고 720개 차감을 확인했고, 상품별 불일치는 0건이었다. HikariCP 대기 스레드는 각 실행의 5초 간격 표본 4개에서 모두 0이었다.
+
+20 POST/s에서 같은 키의 쓰기 경합은 재현됐다. 일반 상품의 p95 차이는 약 0.86ms였고 두 조건은 순차로 한 번씩 실행했다. 이 결과만으로 일반 주문 지연이 커넥션 풀을 통해 전파됐다고 판단하거나 부하 한계를 정하기는 어렵다.
+
+원본은 로컬 결과 폴더 `k6-order-contention-20261110-225005-050-39832-pct0`과 `k6-order-contention-20261110-225026-347-39832-pct50`에 있다. 앞선 예비 실행에서는 도착 구간 끝에 반복이 한 번씩 더 시작돼 POST와 주문이 403건 발생했다. 주문 전송 수를 스크립트에서 제한하고 대상 목록을 다시 내보낸 뒤 본 측정을 시작했다. 예비 실행분은 위 수치에서 제외했다.
 
 ### 인기 상품 경합이 일반 상품에 미치는 영향
 

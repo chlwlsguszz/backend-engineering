@@ -88,6 +88,12 @@ PostgreSQL 16 회귀 테스트에서 두 요청은 같은 주문 ID를 반환했
 
 2026-11-10 PostgreSQL 16에서 동일한 입력으로 신규 주문과 순차 재시도 전후의 `hikaricp.connections.acquire` 카운터 차이를 비교했다. 신규 주문은 **3회에서 1회**로 줄었고 재시도는 두 실행 모두 **1회**였다. 기대값을 각각 1회로 고정한 뒤 전체 테스트 68개가 통과했다. 이 측정의 단위는 주문 요청당 풀 대여 횟수다. [측정 테스트](../backend/src/test/java/com/marketengine/backend/order/application/OrderStockOutboxIntegrationTest.java)
 
+### 주문 멱등성 충돌을 PostgreSQL 오류 필드로 식별
+
+이전에는 예외 메시지에 `idempotency`가 들어가면 기존 주문을 재조회했다. 주문 INSERT에는 `idempotency_key` 열이 있어 다른 DB 오류에도 같은 문자열이 나타날 수 있다. 이제 PostgreSQL이 보고한 SQLSTATE가 `23505`이고 테이블이 `orders`, 제약 이름이 `uk_orders_member_idempotency_key`일 때만 복구한다. 나머지 오류는 원래 예외로 전파한다. [주문 서비스](../backend/src/main/java/com/marketengine/backend/order/application/OrderService.java)
+
+PostgreSQL 16 회귀 테스트에서 재고 10개에 같은 키로 주문 10건을 동시에 시도했다. 10개 응답의 주문 ID가 같았고, 저장된 주문 한 건과 남은 재고 9개, Outbox 한 건을 확인했다. 별도의 유니크 인덱스 `uk_test_idempotency_product`를 위반한 경우에는 같은 SQLSTATE에도 실제 제약 이름을 가진 DB 오류가 전파됐다. [통합 테스트](../backend/src/test/java/com/marketengine/backend/order/application/OrderStockOutboxIntegrationTest.java)
+
 ## Elasticsearch 재색인
 
 ### 4. 순차 배치 루프에서 DB 조회와 ES 쓰기를 분리
