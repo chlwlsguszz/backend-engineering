@@ -20,8 +20,11 @@ if ($LASTEXITCODE -ne 0) {
 
 $json = $rows -join [Environment]::NewLine
 $manifest = ConvertFrom-Json -InputObject $json
-if ($manifest.schemaVersion -ne 1 -or $manifest.seed -ne $Seed -or $manifest.requestedCount -ne $Count) {
+if ($manifest.schemaVersion -ne 2 -or $manifest.seed -ne $Seed -or $manifest.requestedCount -ne $Count) {
     throw 'Unexpected order target manifest returned by PostgreSQL.'
+}
+if ($manifest.memberCount -lt 1) {
+    throw 'The seeded catalog must have a continuous member ID range starting at 1. Check the selected database.'
 }
 if ($manifest.targets.Count -lt 1) {
     throw 'No active catalog products with positive stock were found.'

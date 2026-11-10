@@ -59,7 +59,7 @@ services:
       SPRING_ELASTICSEARCH_URIS: http://elasticsearch:9200
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: "6379"
-      MARKETENGINE_CACHE_REDIS_ENABLED: "true"
+      MARKETENGINE_CACHE_REDIS_ENABLED: "${MARKETENGINE_CACHE_REDIS_ENABLED:-true}"
     depends_on:
       postgres:
         condition: service_healthy

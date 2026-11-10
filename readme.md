@@ -103,14 +103,13 @@ docker compose logs -f backend
 
 빈 프로젝트 볼륨에서 처음 실행하면 B9가 1,000만 건을 생성합니다. 이미 생성한 환경은 기존 데이터를 사용합니다. 백엔드 시작이 완료된 뒤 같은 PowerShell 창에서 `.\scripts\sql\run-check-catalog-distribution.ps1`을 실행하면 DB의 실제 건수와 재고를 확인할 수 있습니다.
 
+Windows에서 Buildx가 `docker-credential-desktop`을 찾지 못하면 Docker 설치 폴더와 그 앞의 시스템 `Path` 항목을 확인합니다. 이 프로젝트의 개발 장비에서는 k6 경로 끝의 따옴표가 원인이었고, 환경 변수 편집 후에도 따옴표 한 글자인 항목과 끝에 따옴표가 붙은 Docker 경로가 남았습니다. 이 두 형태는 프로젝트 루트의 PowerShell에서 `.\scripts\windows\repair-docker-path.ps1`로 복구할 수 있습니다. 필요한 경우 Windows 관리자 승인을 요청하며, 현재 터미널에도 교정한 경로를 적용한 뒤 `node:22-alpine` 레지스트리 조회를 검증합니다.
+
 ### 10만 건 파일럿 생성
 
 Windows PowerShell에서 프로젝트 루트를 기준으로 실행합니다. 1,000만 건 환경이 실행 중이면 먼저 `docker compose -p marketengine-catalog-10m stop`으로 포트를 비웁니다. 아래 프로젝트 이름을 처음 사용할 때 별도 볼륨이 생성됩니다.
 
 ```powershell
-$dockerBin = Split-Path -Parent (Get-Command docker.exe -CommandType Application | Select-Object -First 1 -ExpandProperty Path)
-$env:Path = "$dockerBin;$env:Path"
-if (($env:PATHEXT -split ';') -notcontains '.EXE') { $env:PATHEXT = ".EXE;$env:PATHEXT" }
 docker compose -p marketengine-catalog stop
 $env:COMPOSE_PROJECT_NAME = 'marketengine-catalog-pilot'
 $env:CATALOG_PRODUCT_COUNT = '100000'
@@ -166,7 +165,7 @@ foreach ($workers in 0, 1, 2, 4, 8) {
 .\scripts\sql\run-seed-order-products.ps1 -Seed 42 -Count 1000
 ```
 
-출력 파일은 `scripts/k6/order-targets.json`입니다. 각 항목의 `productId`, `initialStock`, `unitPrice`(소수 문자열)는 추출 시점의 값입니다. 적합한 상품이 부족하면 실제 개수를 기록하고, 후보가 없으면 기존 파일을 보존하고 종료합니다. 기존 주문 k6 및 재고 확인 SQL의 기본 ID는 아직 예전 fixture 범위를 가리킵니다. 해당 스크립트의 입력 전환은 후속 단계입니다.
+출력 파일은 `scripts/k6/order-targets.json`입니다. 버전 2에는 회원 범위(`1..memberCount`), 상품 ID, 추출 시점의 가용 재고, 단가, 인기 점수가 들어 있습니다. 이전에 내보낸 파일은 위 명령으로 다시 생성합니다. 기존 `order_spread_products.js`와 `order_hot_stock.js`의 기본 ID는 과거 카탈로그를 가리킵니다. 현재 카탈로그를 사용하는 검색과 주문 실험은 [상황별 k6 실행 가이드](docs/K6_SCENARIOS.md)를 따릅니다.
 
 개인 블로그에 모든 과정을 기록했습니다.
 
