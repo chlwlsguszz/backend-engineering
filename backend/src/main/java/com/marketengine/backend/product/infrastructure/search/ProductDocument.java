@@ -2,6 +2,7 @@ package com.marketengine.backend.product.infrastructure.search;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.Objects;
 
 import org.springframework.data.annotation.Id;
 import org.springframework.data.elasticsearch.annotations.Document;
@@ -26,6 +27,7 @@ public class ProductDocument {
     public static final String INDEX_NAME = "products";
 
     @Id
+    @Field(type = FieldType.Long)
     private Long id;
 
     @Field(type = FieldType.Text)
@@ -82,5 +84,14 @@ public class ProductDocument {
     static BoolQuery.Builder visibleProducts() {
         // Existing catalog documents have no outbox metadata and must remain visible.
         return new BoolQuery.Builder().mustNot(q -> q.term(t -> t.field("outboxDeleted").value(true)));
+    }
+
+    boolean matchesProjection(ProductDocument other) {
+        return id.equals(other.id) && Objects.equals(name, other.name)
+                && other.priceAmount != null && priceAmount.compareTo(other.priceAmount) == 0
+                && stockQuantity == other.stockQuantity && popularityScore == other.popularityScore
+                && Objects.equals(category, other.category) && Objects.equals(brand, other.brand)
+                && Objects.equals(color, other.color) && Objects.equals(gender, other.gender)
+                && other.createdAt != null && createdAt.toInstant().toEpochMilli() == other.createdAt.toInstant().toEpochMilli();
     }
 }

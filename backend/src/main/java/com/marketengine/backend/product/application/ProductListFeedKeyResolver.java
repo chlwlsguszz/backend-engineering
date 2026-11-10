@@ -5,8 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.Optional;
 
-import com.marketengine.backend.product.domain.ProductCategory;
-import com.marketengine.backend.product.domain.ProductSearchKeywords;
+import com.marketengine.backend.product.domain.ProductListQuery;
 
 public final class ProductListFeedKeyResolver {
 
@@ -16,41 +15,22 @@ public final class ProductListFeedKeyResolver {
     private ProductListFeedKeyResolver() {
     }
 
-    public static Optional<ProductListFeedKey> resolve(
-            String keyword,
-            ProductCategory category,
-            String brand,
-            String gender,
-            String color,
-            Integer minPrice,
-            Integer maxPrice,
-            String sortBy,
-            int page,
-            int size
-    ) {
-        if (size != FEED_PAGE_SIZE || page < 0 || page > MAX_CACHED_PAGE) {
+    public static Optional<ProductListFeedKey> resolve(ProductListQuery query) {
+        if (query.size() != FEED_PAGE_SIZE || query.page() > MAX_CACHED_PAGE) {
             return Optional.empty();
         }
-
-        String terms = String.join(" ", ProductSearchKeywords.tokens(keyword));
-        String sort = "POPULARITY".equalsIgnoreCase(sortBy) ? "POPULARITY" : "LATEST";
-        String key = "feed:q1?cat=" + Objects.toString(category, "")
-                + "&brand=" + encodeFacet(brand)
-                + "&gender=" + encodeFacet(gender)
-                + "&color=" + encodeFacet(color)
-                + "&min=" + Objects.toString(minPrice, "")
-                + "&max=" + Objects.toString(maxPrice, "")
-                + "&kw=" + URLEncoder.encode(terms, StandardCharsets.UTF_8)
-                + "&sort=" + sort + "&page=" + page + "&size=" + size;
-
-        var query = new ProductListFeedQuery(
-                keyword, category, brand, gender, color, minPrice, maxPrice, sortBy, page, size
-        );
+        String key = "feed:q2?cat=" + Objects.toString(query.category(), "")
+                + "&brand=" + encode(query.brand())
+                + "&gender=" + encode(query.gender())
+                + "&color=" + encode(query.color())
+                + "&min=" + Objects.toString(query.minPrice(), "")
+                + "&max=" + Objects.toString(query.maxPrice(), "")
+                + "&kw=" + encode(query.keyword())
+                + "&sort=" + query.sortBy() + "&page=" + query.page() + "&size=" + query.size();
         return Optional.of(new ProductListFeedKey(key, query));
     }
 
-    private static String encodeFacet(String value) {
-        // Both search backends use exact facet values after trimming their edges.
-        return URLEncoder.encode(Objects.toString(value, "").trim(), StandardCharsets.UTF_8);
+    private static String encode(String value) {
+        return URLEncoder.encode(Objects.toString(value, ""), StandardCharsets.UTF_8);
     }
 }

@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.data.domain.SliceImpl;
@@ -17,6 +16,7 @@ import org.springframework.stereotype.Component;
 import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
 import com.marketengine.backend.product.application.ProductListSearcher;
 import com.marketengine.backend.product.domain.ProductCategory;
+import com.marketengine.backend.product.domain.ProductListQuery;
 import com.marketengine.backend.product.domain.ProductSearchKeywords;
 
 import co.elastic.clients.elasticsearch._types.SortOptions;
@@ -36,28 +36,19 @@ public class ElasticsearchProductListSearcher implements ProductListSearcher {
     private final ElasticsearchOperations elasticsearchOperations;
 
     @Override
-    public Slice<ProductSummaryResponse> search(
-            String keyword,
-            ProductCategory category,
-            String brand,
-            String gender,
-            String color,
-            Integer minPrice,
-            Integer maxPrice,
-            String sortBy,
-            Pageable pageable
-    ) {
-        int fetchSize = pageable.getPageSize() + 1;
-        Pageable fetchPageable = PageRequest.of(pageable.getPageNumber(), fetchSize, pageable.getSort());
-
-        NativeQuery query = NativeQuery.builder()
-                .withQuery(buildQuery(keyword, category, brand, gender, color, minPrice, maxPrice))
-                .withSort(buildSort(sortBy))
-                .withPageable(fetchPageable)
-                .withTrackTotalHits(false)
-                .build();
-
-        SearchHits<ProductDocument> hits = elasticsearchOperations.search(query, ProductDocument.class);
+    public Slice<ProductSummaryResponse> search(ProductListQuery criteria) {
+        Pageable pageable = criteria.pageable();
+        // Spring Data obtains ES "from" from Pageable and "size" from getRequestSize().
+        // Increasing the page size itself shifts the start of every later page.
+        NativeQuery sliceQuery = new NativeQuery(NativeQuery.builder()
+                .withQuery(buildQuery(criteria)).withSort(buildSort(criteria.sortBy()))
+                .withPageable(pageable).withTrackTotalHits(false)) {
+            @Override
+            public Integer getRequestSize() {
+                return criteria.fetchSize();
+            }
+        };
+        SearchHits<ProductDocument> hits = elasticsearchOperations.search(sliceQuery, ProductDocument.class);
 
         List<ProductSummaryResponse> items = hits.getSearchHits().stream()
                 .map(SearchHit::getContent)
@@ -72,36 +63,28 @@ public class ElasticsearchProductListSearcher implements ProductListSearcher {
         return new SliceImpl<>(items, pageable, hasNext);
     }
 
-    private static Query buildQuery(
-            String keyword,
-            ProductCategory category,
-            String brand,
-            String gender,
-            String color,
-            Integer minPrice,
-            Integer maxPrice
-    ) {
+    private static Query buildQuery(ProductListQuery search) {
         BoolQuery.Builder bool = ProductDocument.visibleProducts();
 
-        appendKeywordMust(bool, keyword);
+        appendKeywordMust(bool, search.keyword());
 
-        if (category != null) {
-            bool.filter(filterTerm("category", category.name()));
+        if (search.category() != null) {
+            bool.filter(filterTerm("category", search.category().name()));
         }
-        if (hasText(brand)) {
-            bool.filter(filterTerm("brand", brand.trim()));
+        if (search.brand() != null) {
+            bool.filter(filterTerm("brand", search.brand()));
         }
-        if (hasText(gender)) {
-            bool.filter(filterTerm("gender", gender.trim()));
+        if (search.gender() != null) {
+            bool.filter(filterTerm("gender", search.gender()));
         }
-        if (hasText(color)) {
-            bool.filter(filterTerm("color", color.trim()));
+        if (search.color() != null) {
+            bool.filter(filterTerm("color", search.color()));
         }
-        if (minPrice != null) {
-            bool.filter(filterRangeGte("priceAmount", minPrice.doubleValue()));
+        if (search.minPrice() != null) {
+            bool.filter(filterRangeGte("priceAmount", search.minPrice().doubleValue()));
         }
-        if (maxPrice != null) {
-            bool.filter(filterRangeLte("priceAmount", maxPrice.doubleValue()));
+        if (search.maxPrice() != null) {
+            bool.filter(filterRangeLte("priceAmount", search.maxPrice().doubleValue()));
         }
 
         return Query.of(query -> query.bool(bool.build()));
@@ -136,10 +119,6 @@ public class ElasticsearchProductListSearcher implements ProductListSearcher {
                 SortOptions.of(sort -> sort.field(field -> field.field("createdAt").order(SortOrder.Desc))),
                 SortOptions.of(sort -> sort.field(field -> field.field("id").order(SortOrder.Desc)))
         );
-    }
-
-    private static boolean hasText(String value) {
-        return value != null && !value.trim().isEmpty();
     }
 
     private static ProductSummaryResponse toSummary(ProductDocument document) {

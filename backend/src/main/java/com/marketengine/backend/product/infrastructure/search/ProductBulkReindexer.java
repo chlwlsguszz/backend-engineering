@@ -18,6 +18,7 @@ import org.springframework.data.elasticsearch.core.IndexOperations;
 import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -54,12 +55,19 @@ public class ProductBulkReindexer {
     @Value("${marketengine.elasticsearch.reindex.workers:1}")
     private int workers;
 
+    @Transactional
     public ReindexResult reindex(boolean recreateIndex) {
         if (workers < 0 || workers > 8 || batchSize < 1 || logEveryBatches < 1) {
             throw new IllegalArgumentException(
                     "Reindex requires 0..8 workers and positive batch-size and log-every-batches");
         }
         long startedAt = System.nanoTime();
+        // No other reindex or catalog writer may change the source while we rebuild its projection.
+        jdbcTemplate.execute("LOCK TABLE products, product_search_outbox IN SHARE ROW EXCLUSIVE MODE NOWAIT");
+        if (Boolean.TRUE.equals(jdbcTemplate.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM product_search_outbox WHERE lease_token IS NOT NULL)", Boolean.class))) {
+            throw new IllegalStateException("Drain claimed outbox entries and stop the publisher before reindexing");
+        }
         long totalRows = jdbcTemplate.queryForObject(COUNT_SQL, Long.class);
         checkInterrupted();
         if (recreateIndex) {
@@ -89,6 +97,7 @@ public class ProductBulkReindexer {
         if (targetDocuments > totalRows) {
             log.warn("Existing product index contains extra documents: source={}, target={}", totalRows, targetDocuments);
         }
+        verifySample(index);
         Duration elapsed = Duration.ofNanos(System.nanoTime() - startedAt);
         log.info("Product reindex finished: indexed={}, targetDocuments={}, workers={}, dbReadMs={}, bulkWorkerMs={}, "
                         + "finalRefreshMs={}, wallMs={}",
@@ -96,6 +105,27 @@ public class ProductBulkReindexer {
                 TimeUnit.NANOSECONDS.toMillis(stats.bulkNanos()), TimeUnit.NANOSECONDS.toMillis(refreshNanos),
                 elapsed.toMillis());
         return new ReindexResult(stats.indexed(), elapsed);
+    }
+
+    private void verifySample(IndexCoordinates index) {
+        // At most five PK seeks, also for sparse catalogs; avoid an ORDER BY random() on 10M rows.
+        List<ProductDocument> sample = jdbcTemplate.query("""
+                WITH bounds AS (SELECT min(id) AS lo, max(id) AS hi FROM products)
+                SELECT DISTINCT p.* FROM bounds CROSS JOIN generate_series(0, 4) AS g(i)
+                CROSS JOIN LATERAL (
+                    SELECT id, name, price_amount, stock_quantity, category, brand, color, gender,
+                           popularity_score, created_at
+                    FROM products WHERE id >= bounds.lo + floor((bounds.hi - bounds.lo)::numeric * g.i / 4)::bigint
+                    ORDER BY id LIMIT 1
+                ) AS p
+                """, ProductDocumentRowMapper::map);
+        for (var expected : sample) {
+            var actual = elasticsearchOperations.get(expected.getId().toString(), ProductDocument.class, index);
+            if (actual == null || !expected.matchesProjection(actual)) {
+                throw new IllegalStateException("Reindex sample mismatch for product " + expected.getId());
+            }
+        }
+        log.info("Verified {} product search projections", sample.size());
     }
 
     private TransferStats transfer(IndexCoordinates index, long totalRows) {

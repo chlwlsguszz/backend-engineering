@@ -15,7 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.data.elasticsearch.DataElasticsearchTest;
-import org.springframework.data.domain.PageRequest;
+import com.marketengine.backend.product.domain.ProductListQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.document.Document;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -77,7 +77,7 @@ class ProductOutboxPublisherIntegrationTest {
         operations.indexOps(ProductDocument.class).refresh();
 
         var searcher = new ElasticsearchProductListSearcher(operations);
-        var products = searcher.search(null, null, null, null, null, null, null, "LATEST", PageRequest.of(0, 12));
+        var products = searcher.search(new ProductListQuery(null, null, null, null, null, null, null, "LATEST", 0, 12));
         assertThat(products.getContent()).extracting(ProductSummaryResponse::name)
                 .containsExactlyInAnyOrder("Legacy", "New");
     }

@@ -1,8 +1,5 @@
 package com.marketengine.backend.product.application;
 
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Slice;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,10 +9,9 @@ import com.marketengine.backend.common.exception.ErrorCode;
 import com.marketengine.backend.product.api.ProductDtos.CreateProductRequest;
 import com.marketengine.backend.product.api.ProductDtos.ProductDetailResponse;
 import com.marketengine.backend.product.api.ProductDtos.ProductPageResponse;
-import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
 import com.marketengine.backend.product.api.ProductDtos.UpdateProductRequest;
 import com.marketengine.backend.product.domain.Product;
-import com.marketengine.backend.product.domain.ProductCategory;
+import com.marketengine.backend.product.domain.ProductListQuery;
 import com.marketengine.backend.product.domain.ProductRepository;
 import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
 
@@ -56,25 +52,10 @@ public class ProductService {
     }
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    public ProductPageResponse list(
-            String keyword,
-            ProductCategory category,
-            String brand,
-            String gender,
-            String color,
-            Integer minPrice,
-            Integer maxPrice,
-            String sortBy,
-            int page,
-            int size
-    ) {
-        return ProductListFeedKeyResolver.resolve(
-                        keyword, category, brand, gender, color, minPrice, maxPrice, sortBy, page, size
-                )
+    public ProductPageResponse list(ProductListQuery query) {
+        return ProductListFeedKeyResolver.resolve(query)
                 .map(productListFeedCache::get)
-                .orElseGet(() -> searchProducts(
-                        keyword, category, brand, gender, color, minPrice, maxPrice, sortBy, page, size
-                ));
+                .orElseGet(() -> ProductPageResponse.from(productListSearcher.search(query)));
     }
 
     @Transactional
@@ -106,33 +87,6 @@ public class ProductService {
         productRepository.delete(product);
         productRepository.flush();
         productSearchOutbox.enqueue(productId);
-    }
-
-    private ProductPageResponse searchProducts(
-            String keyword,
-            ProductCategory category,
-            String brand,
-            String gender,
-            String color,
-            Integer minPrice,
-            Integer maxPrice,
-            String sortBy,
-            int page,
-            int size
-    ) {
-        Pageable pageable = PageRequest.of(page, size);
-        Slice<ProductSummaryResponse> pageResult = productListSearcher.search(
-                keyword,
-                category,
-                brand,
-                gender,
-                color,
-                minPrice,
-                maxPrice,
-                sortBy,
-                pageable
-        );
-        return ProductPageResponse.from(pageResult);
     }
 
     private Product findProduct(Long productId) {

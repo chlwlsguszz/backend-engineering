@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Profile;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
@@ -23,11 +24,11 @@ import com.marketengine.backend.product.api.ProductDtos.ProductPageResponse;
 
 @Configuration
 @EnableCaching
+@Profile("!reindex")
 @ConditionalOnProperty(prefix = "marketengine.cache.redis", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class RedisCacheConfig {
 
-    // Start a new namespace so entries written with the old 30-minute TTL expire on their own.
-    public static final String PRODUCT_LIST_FEED = "productListFeed:v2";
+    public static final String PRODUCT_LIST_FEED = "productListFeed:v3";
 
     @Bean
     RedisCacheConfiguration productListFeedCacheConfiguration(
@@ -61,11 +62,14 @@ public class RedisCacheConfig {
     @Bean
     CacheManager cacheManager(
             RedisConnectionFactory connectionFactory,
-            RedisCacheConfiguration productListFeedCacheConfiguration
+            RedisCacheConfiguration productListFeedCacheConfiguration,
+            @Value("${marketengine.search.backend:elasticsearch}") String searchBackend
     ) {
+        var config = productListFeedCacheConfiguration.computePrefixWith(name -> name + ":" + searchBackend + "::");
         return RedisCacheManager.builder(connectionFactory)
-                .cacheDefaults(productListFeedCacheConfiguration)
-                .withCacheConfiguration(PRODUCT_LIST_FEED, productListFeedCacheConfiguration)
+                .enableStatistics()
+                .cacheDefaults(config)
+                .withCacheConfiguration(PRODUCT_LIST_FEED, config)
                 .build();
     }
 }
