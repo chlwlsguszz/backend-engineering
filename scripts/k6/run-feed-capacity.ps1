@@ -86,7 +86,7 @@ function Invoke-K6Stage {
 }
 
 Write-Host 'Warming up: 50 RPS for 10s'
-Invoke-K6Stage -Name 'warmup' -Arguments @('-e', 'RATE=50', '-e', 'DURATION=10s', '/scripts/search_scenarios.js')
+Invoke-K6Stage -Name 'warmup' -Arguments @('-e', 'FEED_WARMUP=1', '-e', 'RATE=50', '-e', 'DURATION=10s', '/scripts/search_scenarios.js')
 
 if ($Sweep) {
     $holdSeconds = if ($TargetRps -gt 10000) { 0 } else { 30 }

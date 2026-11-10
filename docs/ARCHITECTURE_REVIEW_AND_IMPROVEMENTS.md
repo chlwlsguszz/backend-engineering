@@ -130,6 +130,7 @@
 ## 3. 공통 및 인프라(Common & Infra) 영역의 숨은 성능 병목
 
 1. **모든 요청에 대한 동기 콘솔 로깅 및 `UUID.randomUUID()` 호출 (`RequestResponseLoggingFilter`)**
+   - **반영 상태** 현재 요청 필터는 느린 응답과 HTTP 오류를 기록하고 추적용 ID 생성에 `ThreadLocalRandom`을 사용한다. 아래 수치는 변경 전 구조를 기준으로 한 병목 가설이다. [변경 기록](IMPROVEMENT_LOG.md#http-요청-로깅)
    - 7,000 RPS 부하 시 초당 7,000번의 `UUID.randomUUID()`(`SecureRandom` 내부 동기화 락 경합)와 `log.info("Request completed ...")` 표준 출력(stdout) 동기 I/O + Docker JSON 로그 디스크 쓰기가 발생하여 응답 지연율을 높입니다.
    - **개선**: 정상 200 응답은 샘플링하거나 지정된 임계치(예: `durationMs >= 200ms`) 이상인 슬로우 요청 및 에러(4xx/5xx)만 로깅하도록 변경합니다.
 2. **`hibernate.format_sql: true` 상시 활성화 (`application.yml`)**
@@ -215,7 +216,8 @@
 - [ ] `ProductDocument.id`에 `@Field(type = FieldType.Long)` 명시 및 `ElasticsearchProductListSearcher` 키워드 검색에 `fuzziness` 옵션 추가
 - [ ] `OrderService`의 `memberRepository.findById()`를 `OrderCreateExecutor` 트랜잭션 내부로 이동 및 `isIdempotencyKeyViolation` 제약조건 판별 정교화
 - [ ] `OrderService.update/delete` 재고 증감 반영 및 `OrderService.list()` 페이징 적용
-- [ ] `RequestResponseLoggingFilter` 정상 요청 로깅 최소화 및 `hibernate.format_sql: false` 변경
+- [x] `RequestResponseLoggingFilter`에서 느린 응답과 오류를 선별하고 요청 ID 생성 비용 축소
+- [ ] `hibernate.format_sql: false` 변경
 
 ### 🚀 Priority 2: 아키텍처 & 시나리오 고도화 (포트폴리오 차별화)
 - [ ] **무한 스크롤 커서 페이징(`No-Offset` / `search_after`)** 도입으로 `page >= 3` Deep Pagination 병목 근본 해결

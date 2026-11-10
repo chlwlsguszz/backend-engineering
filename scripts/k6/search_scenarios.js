@@ -1,11 +1,18 @@
 import { check, sleep } from "k6";
 import exec from "k6/execution";
 import http from "k6/http";
-import { Gauge, Trend } from "k6/metrics";
+import { Counter, Gauge, Trend } from "k6/metrics";
 
 // RATE counts new browsing sessions per second. A session can request several pages.
 const CASE = __ENV.CASE || "feed";
 const isSweep = CASE === "feed-sweep";
+const isFeedWarmup = CASE === "feed" && __ENV.FEED_WARMUP === "1";
+const feedQueries = {
+  home_latest: {},
+  top_latest: { category: "TOP" },
+  home_popular: { sortBy: "POPULARITY" },
+};
+const warmupResponses = isFeedWarmup ? new Counter("warmup_valid_responses") : null;
 const BASE_URL = (__ENV.BASE_URL || "http://localhost:8080").replace(/\/$/, "");
 const PAGE_SIZE = 12;
 const RATE = integerOption("RATE", isSweep ? 10000 : 5, 1, 15000);
@@ -100,6 +107,11 @@ if (isSweep) {
   }
   // A dropped iteration never enters feed() to receive a band tag.
   thresholds.dropped_iterations = [];
+} else if (isFeedWarmup) {
+  thresholds.dropped_iterations = [];
+  for (const variant of Object.keys(feedQueries)) {
+    thresholds[`warmup_valid_responses{feed:${variant}}`] = ["count>0"];
+  }
 } else if (CASE !== "pagination") {
   // k6 records drops in the executor, before a VU can add a phase tag.
   thresholds.dropped_iterations = ["count==0"];
@@ -200,11 +212,13 @@ export function feed() {
   }
   // Keep this sequence identical for cache-enabled and cache-disabled runs.
   const slot = exec.scenario.iterationInTest % 10;
-  let filters = {};
-  if (slot >= 6 && slot < 9) filters = { category: "TOP" };
-  if (slot === 9) filters = { sortBy: "POPULARITY" };
-  const data = readPage(filters, 0, "feed");
-  if (data) check(data, { "feed has another page": (d) => d.items.length === PAGE_SIZE && d.hasNext });
+  let variant = "home_latest";
+  if (slot === 9) variant = "home_popular";
+  else if (slot >= 6) variant = "top_latest";
+  const data = readPage(feedQueries[variant], 0, "feed");
+  if (!data) return;
+  const valid = check(data, { "feed has another page": (d) => d.items.length === PAGE_SIZE && d.hasNext });
+  if (warmupResponses && valid) warmupResponses.add(1, { feed: variant });
 }
 
 export function discovery() {

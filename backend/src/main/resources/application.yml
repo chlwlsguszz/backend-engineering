@@ -39,6 +39,10 @@ spring:
   cache:
     type: redis
 
+logging:
+  pattern:
+    level: "%5p [requestId=%X{requestId:--}]"
+
 server:
   tomcat:
     threads:
@@ -49,6 +53,8 @@ server:
       enabled: true
 
 marketengine:
+  logging:
+    slow-request-threshold: 200ms
   cache:
     redis:
       enabled: true

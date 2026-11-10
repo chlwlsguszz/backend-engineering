@@ -46,6 +46,12 @@ B9는 각 브랜드 아래 여러 모델이 공유하는 라인업을 만들고,
 
 키워드는 검색과 같은 규칙으로 소문자로 바꾸고 공백으로 나눈 뒤 길이 1인 토큰을 제외한다. 브랜드, 성별, 색상은 앞뒤 공백만 제거해 대소문자와 내부 공백을 보존한다. 임의의 필터를 캐싱하면 반복 검색은 재사용할 수 있지만, 한 번만 조회되는 조합도 만료 전까지 Redis에 남는다. 새 정책의 키 수, 적중률, 메모리 사용량은 아직 측정하지 않았다.
 
+## HTTP 요청 로깅
+
+기존 필터는 빠른 성공 응답에도 매번 완료 로그를 출력했고, 클라이언트가 요청 ID를 생략하면 `UUID.randomUUID()`를 호출했다. 이제 필터는 200ms 이상인 성공 응답과 4xx를 WARN, 5xx를 ERROR로 기록한다. 필터 밖으로 전파되는 예외는 경과 시간과 스택을 남기고 다시 던진다. 처리 시간은 단조 시계로 측정하고 임계값은 `marketengine.logging.slow-request-threshold`로 조절한다.
+
+클라이언트가 보낸 `X-Request-Id`는 응답과 로그에 사용한다. 헤더가 없거나 비어 있으면 `ThreadLocalRandom`으로 추적용 UUID v4를 생성한다. 전체 요청 수와 지연 분포는 k6와 HTTP 메트릭으로 확인하고, 개별 느린 요청과 오류는 요청 ID로 찾는다. 정상 요청의 로그가 줄어드는 효과와 실제 RPS, p99 변화는 같은 조건에서 다시 측정한다. [요청 필터](../backend/src/main/java/com/marketengine/backend/common/logging/RequestResponseLoggingFilter.java)
+
 ## Elasticsearch 재색인
 
 ### 4. 순차 배치 루프에서 DB 조회와 ES 쓰기를 분리
