@@ -4,12 +4,11 @@ import java.util.List;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.marketengine.backend.common.exception.BusinessException;
 import com.marketengine.backend.common.exception.ErrorCode;
-import com.marketengine.backend.member.domain.Member;
-import com.marketengine.backend.member.domain.MemberRepository;
 import com.marketengine.backend.order.api.OrderDtos.CreateOrderRequest;
 import com.marketengine.backend.order.api.OrderDtos.OrderResponse;
 import com.marketengine.backend.order.api.OrderDtos.UpdateOrderRequest;
@@ -23,13 +22,29 @@ import lombok.RequiredArgsConstructor;
 public class OrderService {
 
     private final OrderRepository orderRepository;
-    private final MemberRepository memberRepository;
     private final OrderCreateExecutor orderCreateExecutor;
 
+    // Recovery must run after the writer has rolled back, even with a transactional caller.
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public OrderResponse create(CreateOrderRequest request) {
-        return orderRepository.findByMemberIdAndIdempotencyKey(request.memberId(), request.idempotencyKey())
-                .map(existing -> OrderResponse.from(validateSameRequest(existing, request)))
-                .orElseGet(() -> createNewOrder(request));
+        try {
+            return orderCreateExecutor.execute(request);
+        } catch (BusinessException ex) {
+            if (ex.errorCode() != ErrorCode.INSUFFICIENT_STOCK) {
+                throw ex;
+            }
+            // A concurrent request with the same key may have consumed the last unit.
+            return orderCreateExecutor.findExistingResponse(request).orElseThrow(() -> ex);
+        } catch (DataIntegrityViolationException ex) {
+            if (!isIdempotencyKeyViolation(ex)) {
+                throw ex;
+            }
+            return orderCreateExecutor.findExistingResponse(request)
+                    .orElseThrow(() -> new BusinessException(
+                            ErrorCode.CONFLICT,
+                            "Duplicate order request is still being processed"
+                    ));
+        }
     }
 
     @Transactional(readOnly = true)
@@ -54,39 +69,6 @@ public class OrderService {
     public void delete(Long orderId) {
         Order order = findOrder(orderId);
         orderRepository.delete(order);
-    }
-
-    private OrderResponse createNewOrder(CreateOrderRequest request) {
-        Member member = memberRepository.findById(request.memberId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Member not found"));
-
-        try {
-            return orderCreateExecutor.execute(request, member);
-        } catch (DataIntegrityViolationException ex) {
-            if (!isIdempotencyKeyViolation(ex)) {
-                throw ex;
-            }
-            Order existing = orderRepository.findByMemberIdAndIdempotencyKey(
-                            request.memberId(),
-                            request.idempotencyKey()
-                    )
-                    .orElseThrow(() -> new BusinessException(
-                            ErrorCode.CONFLICT,
-                            "Duplicate order request is still being processed"
-                    ));
-            return OrderResponse.from(validateSameRequest(existing, request));
-        }
-    }
-
-    private Order validateSameRequest(Order existing, CreateOrderRequest request) {
-        if (!request.productId().equals(existing.getProduct().getId())
-                || existing.getQuantity() != request.quantity()) {
-            throw new BusinessException(
-                    ErrorCode.IDEMPOTENCY_KEY_CONFLICT,
-                    "Idempotency key already used with a different request"
-            );
-        }
-        return existing;
     }
 
     private boolean isIdempotencyKeyViolation(DataIntegrityViolationException ex) {

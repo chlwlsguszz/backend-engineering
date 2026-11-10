@@ -2,9 +2,9 @@ package com.marketengine.backend.order.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -15,12 +15,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import com.marketengine.backend.common.exception.BusinessException;
 import com.marketengine.backend.common.exception.ErrorCode;
 import com.marketengine.backend.member.domain.Member;
-import com.marketengine.backend.member.domain.MemberRepository;
 import com.marketengine.backend.order.api.OrderDtos.CreateOrderRequest;
 import com.marketengine.backend.order.api.OrderDtos.OrderResponse;
 import com.marketengine.backend.order.api.OrderDtos.UpdateOrderRequest;
@@ -37,93 +36,52 @@ class OrderServiceTest {
     private OrderRepository orderRepository;
 
     @Mock
-    private MemberRepository memberRepository;
-
-    @Mock
     private OrderCreateExecutor orderCreateExecutor;
 
     @InjectMocks
     private OrderService orderService;
 
     @Test
-    void create_delegatesToExecutorWhenIdempotencyKeyIsNew() {
-        Member member = new Member("user@test.com", "pw", "user");
-        CreateOrderRequest request = new CreateOrderRequest(1L, 2L, 3, "key-1");
-        OrderResponse expected = new OrderResponse(
-                99L,
-                1L,
-                2L,
-                3,
-                new BigDecimal("30.00"),
-                OrderStatus.CREATED,
-                new BigDecimal("90.00"),
-                "key-1",
-                null
-        );
+    void create_returnsExecutorResultWithoutRecoveryLookup() {
+        var request = new CreateOrderRequest(1L, 2L, 3, "key-1");
+        var expected = mock(OrderResponse.class);
+        when(orderCreateExecutor.execute(request)).thenReturn(expected);
 
-        when(orderRepository.findByMemberIdAndIdempotencyKey(1L, "key-1")).thenReturn(Optional.empty());
-        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
-        when(orderCreateExecutor.execute(request, member)).thenReturn(expected);
+        assertThat(orderService.create(request)).isSameAs(expected);
 
-        OrderResponse response = orderService.create(request);
-
-        assertThat(response).isEqualTo(expected);
-        verify(orderCreateExecutor).execute(request, member);
+        verify(orderCreateExecutor).execute(request);
+        verifyNoMoreInteractions(orderCreateExecutor);
     }
 
     @Test
-    void create_returnsExistingOrderWithoutCallingExecutorWhenIdempotencyKeyMatches() {
-        Member member = new Member("user@test.com", "pw", "user");
-        Product product = new Product(
-                "book",
-                new BigDecimal("30.00"),
-                5,
-                "book detail",
-                ProductCategory.TOP,
-                "CORE",
-                "BLACK",
-                "UNISEX",
-                "ACTIVE",
-                100
-        );
-        ReflectionTestUtils.setField(product, "id", 1001L);
-        Order existing = new Order(member, product, 3, new BigDecimal("30.00"), OrderStatus.CREATED, "key-1");
-        CreateOrderRequest request = new CreateOrderRequest(1L, 1001L, 3, "key-1");
+    void create_preservesInsufficientStockWhenNoConcurrentOrderExists() {
+        var request = new CreateOrderRequest(1L, 1001L, 1, "last-unit");
+        var failure = new BusinessException(ErrorCode.INSUFFICIENT_STOCK, "No units available");
+        when(orderCreateExecutor.execute(request)).thenThrow(failure);
+        when(orderCreateExecutor.findExistingResponse(request)).thenReturn(Optional.empty());
 
-        when(orderRepository.findByMemberIdAndIdempotencyKey(1L, "key-1")).thenReturn(Optional.of(existing));
-
-        OrderResponse response = orderService.create(request);
-
-        assertThat(response.quantity()).isEqualTo(3);
-        assertThat(response.idempotencyKey()).isEqualTo("key-1");
-        verify(orderCreateExecutor, never()).execute(any(), any());
-        verify(memberRepository, never()).findById(any());
+        assertThatThrownBy(() -> orderService.create(request)).isSameAs(failure);
     }
 
     @Test
-    void create_throwsWhenIdempotencyKeyReusedWithDifferentPayload() {
-        Member member = new Member("user@test.com", "pw", "user");
-        Product product = new Product(
-                "book",
-                new BigDecimal("30.00"),
-                5,
-                "book detail",
-                ProductCategory.TOP,
-                "CORE",
-                "BLACK",
-                "UNISEX",
-                "ACTIVE",
-                100
-        );
-        ReflectionTestUtils.setField(product, "id", 2L);
-        Order existing = new Order(member, product, 3, new BigDecimal("30.00"), OrderStatus.CREATED, "key-1");
+    void create_propagatesPayloadConflictFoundDuringRecoveryAfterInsufficientStock() {
+        var request = new CreateOrderRequest(1L, 1001L, 2, "last-unit");
+        var conflict = new BusinessException(ErrorCode.IDEMPOTENCY_KEY_CONFLICT);
+        when(orderCreateExecutor.execute(request)).thenThrow(new BusinessException(ErrorCode.INSUFFICIENT_STOCK));
+        when(orderCreateExecutor.findExistingResponse(request)).thenThrow(conflict);
 
-        when(orderRepository.findByMemberIdAndIdempotencyKey(1L, "key-1")).thenReturn(Optional.of(existing));
+        assertThatThrownBy(() -> orderService.create(request)).isSameAs(conflict);
+    }
 
-        assertThatThrownBy(() -> orderService.create(new CreateOrderRequest(1L, 2L, 5, "key-1")))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(ex -> assertThat(((BusinessException) ex).errorCode())
-                        .isEqualTo(ErrorCode.IDEMPOTENCY_KEY_CONFLICT));
+    @Test
+    void create_readsCommittedOrderAfterConcurrentIdempotencyKeyViolation() {
+        var request = new CreateOrderRequest(1L, 1001L, 1, "duplicate");
+        var expected = mock(OrderResponse.class);
+        when(orderCreateExecutor.execute(request))
+                .thenThrow(new DataIntegrityViolationException("uk_orders_member_idempotency_key"));
+        when(orderCreateExecutor.findExistingResponse(request)).thenReturn(Optional.of(expected));
+
+        assertThat(orderService.create(request)).isSameAs(expected);
     }
 
     @Test

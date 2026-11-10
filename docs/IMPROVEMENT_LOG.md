@@ -74,6 +74,20 @@ docker compose -p marketengine-catalog-10m exec -T postgres psql -U marketengine
 
 성공한 신규 주문마다 DB에 Outbox 쓰기 한 번이 추가된다. 주문 TPS와 색인 지연은 아직 측정하지 않았다. 배포 전에 이미 어긋난 수량은 해당 상품의 다음 변경이나 기존 재색인 작업에서 바로잡힌다.
 
+## 마지막 재고에 대한 중복 주문 복구
+
+재고 한 개에 같은 멱등성 키로 두 요청이 동시에 들어오면 둘 다 기존 주문 조회를 통과할 수 있다. 첫 요청이 마지막 수량을 가져가면 두 번째 요청은 주문 INSERT 전에 재고 부족으로 종료됐다. PostgreSQL 16에서 재현했을 때 DB에는 주문 한 건과 정확한 재고가 남았지만, 같은 요청을 보낸 클라이언트는 서로 다른 응답을 받았다.
+
+이제 쓰기 트랜잭션이 재고 부족으로 롤백되면 바깥 서비스가 같은 회원과 멱등성 키로 커밋된 주문을 한 번 조회한다. 상품과 수량이 같으면 기존 주문을 반환하고, 요청 내용이 다르면 키 충돌을 반환한다. 주문이 없으면 원래 재고 부족 오류를 반환한다. 이 추가 조회는 상품 잠금을 해제한 후에 실행한다. [주문 서비스](../backend/src/main/java/com/marketengine/backend/order/application/OrderService.java)와 [동시 주문 회귀 테스트](../backend/src/test/java/com/marketengine/backend/order/application/OrderStockOutboxIntegrationTest.java)
+
+PostgreSQL 16 회귀 테스트에서 두 요청은 같은 주문 ID를 반환했고, 저장된 주문 한 건과 최종 재고 0개, Outbox 한 건을 확인했다. 같은 환경에서 HikariCP 대여 횟수는 신규 주문 성공 3회, 이미 성공한 주문의 순차 재시도 1회였다.
+
+### 멱등성 조회와 회원 조회를 주문 쓰기 트랜잭션으로 이동
+
+이전 구현은 멱등성 키 조회, 회원 조회, 주문 쓰기마다 커넥션을 빌렸다. 이제 `OrderCreateExecutor.execute()`의 기본 `@Transactional` 안에서 기존 주문을 먼저 조회한다. 재시도라면 기존 응답을 반환한다. 신규 주문이면 같은 커넥션에서 회원을 확인하고 상품을 잠근 뒤 주문, 재고, Outbox를 함께 커밋한다. 바깥 서비스는 호출자의 트랜잭션을 보류하고 실행 빈의 롤백이 끝난 뒤 중복 요청을 복구한다. [주문 실행 코드](../backend/src/main/java/com/marketengine/backend/order/application/OrderCreateExecutor.java)와 [복구 경계](../backend/src/main/java/com/marketengine/backend/order/application/OrderService.java)
+
+2026-11-10 PostgreSQL 16에서 동일한 입력으로 신규 주문과 순차 재시도 전후의 `hikaricp.connections.acquire` 카운터 차이를 비교했다. 신규 주문은 **3회에서 1회**로 줄었고 재시도는 두 실행 모두 **1회**였다. 기대값을 각각 1회로 고정한 뒤 전체 테스트 68개가 통과했다. 이 측정의 단위는 주문 요청당 풀 대여 횟수다. [측정 테스트](../backend/src/test/java/com/marketengine/backend/order/application/OrderStockOutboxIntegrationTest.java)
+
 ## Elasticsearch 재색인
 
 ### 4. 순차 배치 루프에서 DB 조회와 ES 쓰기를 분리

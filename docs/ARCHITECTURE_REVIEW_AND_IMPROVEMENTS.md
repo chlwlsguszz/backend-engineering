@@ -71,17 +71,11 @@
 
 ## 2. 고동시성 주문 및 멱등성(Order & Concurrency) 영역의 설계 결함
 
-### 🤔 2.1 주문 1건당 DB 커넥션을 2~3번 획득/반납하는 구조와 불필요한 `REQUIRES_NEW`
-- **관련 코드**: `OrderService.create()`, `OrderService.createNewOrder()`, `OrderCreateExecutor.execute()`
-- **현재 동작 흐름**:
-  1. `OrderService.create()` (트랜잭션 없음) → `orderRepository.findByMemberIdAndIdempotencyKey()` (**커넥션 1 획득 후 반납**)
-  2. `OrderService.createNewOrder()` (트랜잭션 없음) → `memberRepository.findById()` (**커넥션 2 획득 후 반납**, `Member`는 준영속 상태가 됨)
-  3. `OrderCreateExecutor.execute()` (`@Transactional(propagation = Propagation.REQUIRES_NEW)`) → `findByIdForUpdate()` + 재고 차감 + 주문 저장 (**커넥션 3 획득 후 반납**)
-- **문제점**:
-  - `OrderService.create()`에 애초에 `@Transactional`이 없으므로 `OrderCreateExecutor.execute()`에 선언된 `Propagation.REQUIRES_NEW`는 불필요한 설정입니다(기본값 `REQUIRED`여도 새 트랜잭션 시작).
-  - 특히 `memberRepository.findById()`를 트랜잭션 외부에서 단독 호출하여, 정상 주문 1건당 DB 커넥션 풀을 불필요하게 1회 더 빌리고 반납하는 오버헤드가 발생합니다.
-- **개선 방안**:
-  - `memberRepository.findById()`(또는 외래키 참조만 필요한 경우 `getReferenceById()`)를 `OrderCreateExecutor.execute()` 트랜잭션 내부로 이동시켜 커넥션 대여 횟수를 줄입니다.
+### 2.1 주문 생성과 중복 요청 복구의 트랜잭션 경계
+
+기존에는 멱등성 키로 주문을 조회하고 회원을 찾는 과정에서 커넥션을 각각 빌린 뒤 쓰기 트랜잭션을 시작했다. 이제 `OrderCreateExecutor.execute(request)`가 기본 전파 방식인 `REQUIRED`로 트랜잭션을 시작한다. 같은 회원과 키로 만든 주문이 있으면 상품과 수량을 확인해 기존 응답을 반환한다. 신규 주문이면 회원을 조회한 뒤 상품을 잠그고 주문 저장, 재고 차감, Outbox 기록을 함께 커밋한다. [주문 실행 코드](../backend/src/main/java/com/marketengine/backend/order/application/OrderCreateExecutor.java)
+
+`OrderService.create()`는 `NOT_SUPPORTED`로 호출자의 트랜잭션이 있으면 잠시 보류한다. 쓰기 트랜잭션이 재고 부족이나 중복 키 충돌로 롤백된 후, 바깥 서비스가 같은 회원과 키의 주문을 다시 조회해 먼저 성공한 요청의 결과를 확인한다. 이 복구 조회는 신규 주문의 성공 경로와 별도로 실행된다. [주문 서비스](../backend/src/main/java/com/marketengine/backend/order/application/OrderService.java)
 
 ---
 
@@ -212,7 +206,8 @@
 - [x] `ProductListFeedKeyResolver`의 필터 조합별 분기를 제거하고 검색 의미에 맞춰 정규화한 공통 키 적용
 - [x] `ProductService`에서 상품 변경 시 피드 캐시 전체 삭제를 제거하고 항목별 TTL 적용
 - [ ] `ProductDocument.id`에 `@Field(type = FieldType.Long)` 명시 및 `ElasticsearchProductListSearcher` 키워드 검색에 `fuzziness` 옵션 추가
-- [ ] `OrderService`의 `memberRepository.findById()`를 `OrderCreateExecutor` 트랜잭션 내부로 이동 및 `isIdempotencyKeyViolation` 제약조건 판별 정교화
+- [x] 기존 주문 조회와 회원 조회를 `OrderCreateExecutor`의 주문 쓰기 트랜잭션에 통합
+- [ ] `isIdempotencyKeyViolation`에서 주문 멱등성 유니크 제약을 정확히 식별
 - [ ] `OrderService.update/delete` 재고 증감 반영 및 `OrderService.list()` 페이징 적용
 - [x] `RequestResponseLoggingFilter`에서 느린 응답과 오류를 선별하고 요청 ID 생성 비용 축소
 - [x] `hibernate.format_sql: false`를 명시하고 SQL 출력 조건 확인

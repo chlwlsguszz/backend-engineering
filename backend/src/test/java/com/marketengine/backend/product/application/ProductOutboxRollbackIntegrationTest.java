@@ -34,7 +34,7 @@ class ProductOutboxRollbackIntegrationTest {
             INSERT INTO products (id, name, price_amount, stock_quantity, description, category,
                                   brand, color, gender, status, popularity_score, created_at, updated_at)
             VALUES (41001, 'rollback test', 10, 4, 'test', 'TOP', 'ACME', 'BLACK', 'UNISEX',
-                    'ACTIVE', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    'ACTIVE', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
             """)
     @Sql(statements = "DELETE FROM products WHERE id = 41001", executionPhase = Sql.ExecutionPhase.AFTER_TEST_METHOD)
     void delete_rollsBackFlushedProductDeletionWhenEnqueueFails() {

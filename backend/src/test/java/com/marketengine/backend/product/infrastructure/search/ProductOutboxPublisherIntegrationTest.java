@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
 
-import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -12,15 +11,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import org.apache.http.HttpHost;
-import org.elasticsearch.client.RestClient;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.data.elasticsearch.DataElasticsearchTest;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.elasticsearch.client.elc.ElasticsearchTemplate;
+import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.document.Document;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
@@ -30,10 +29,9 @@ import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
 import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox.Entry;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
-import co.elastic.clients.json.jackson.JacksonJsonpMapper;
-import co.elastic.clients.transport.rest_client.RestClientTransport;
 
 @Testcontainers(disabledWithoutDocker = true)
+@DataElasticsearchTest(properties = "spring.data.elasticsearch.repositories.enabled=false")
 class ProductOutboxPublisherIntegrationTest {
 
     @Container
@@ -45,17 +43,13 @@ class ProductOutboxPublisherIntegrationTest {
             .waitingFor(Wait.forHttp("/_cluster/health").forPort(9200))
             .withStartupTimeout(Duration.ofMinutes(2));
 
-    private static RestClientTransport transport;
-    private static ElasticsearchClient client;
-    private static ElasticsearchTemplate operations;
+    @Autowired private ElasticsearchClient client;
+    @Autowired private ElasticsearchOperations operations;
     private ProductOutboxPublisher publisher;
 
-    @BeforeAll
-    static void connect() {
-        var host = new HttpHost(es.getHost(), es.getMappedPort(9200));
-        transport = new RestClientTransport(RestClient.builder(host).build(), new JacksonJsonpMapper());
-        client = new ElasticsearchClient(transport);
-        operations = new ElasticsearchTemplate(client);
+    @DynamicPropertySource
+    static void configureElasticsearch(DynamicPropertyRegistry properties) {
+        properties.add("spring.elasticsearch.uris", () -> "http://" + es.getHost() + ":" + es.getMappedPort(9200));
     }
 
     @BeforeEach
@@ -66,13 +60,6 @@ class ProductOutboxPublisherIntegrationTest {
         }
         index.createWithMapping();
         publisher = new ProductOutboxPublisher(client, operations.getElasticsearchConverter());
-    }
-
-    @AfterAll
-    static void disconnect() throws IOException {
-        if (transport != null) {
-            transport.close();
-        }
     }
 
     @Test
