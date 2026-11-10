@@ -23,7 +23,7 @@
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
       "id": 100,
       "panels": [],
-      "title": "Order API — TPS (from counter rate)",
+      "title": "Order API — HTTP requests per second",
       "type": "row"
     },
     {
@@ -60,12 +60,12 @@
           "datasource": "Prometheus",
           "editorMode": "code",
           "expr": "sum(rate(http_server_requests_seconds_count{application=~\"$application\", instance=~\"$instance\", uri=~\"$order_uri\", method=~\"POST\", status=~\"200\"}[$__rate_interval]))",
-          "legendFormat": "success TPS",
+          "legendFormat": "HTTP 200 RPS",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Success TPS (200)",
+      "title": "HTTP 200 RPS (includes replays)",
       "type": "stat"
     },
     {
@@ -77,7 +77,7 @@
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "success TPS (200)" },
+            "matcher": { "id": "byName", "options": "HTTP 200 RPS" },
             "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
           },
           {
@@ -102,7 +102,7 @@
           "datasource": "Prometheus",
           "editorMode": "code",
           "expr": "sum(rate(http_server_requests_seconds_count{application=~\"$application\", instance=~\"$instance\", uri=~\"$order_uri\", method=~\"POST\", status=~\"200\"}[$__rate_interval]))",
-          "legendFormat": "success TPS (200)",
+          "legendFormat": "HTTP 200 RPS",
           "range": true,
           "refId": "A"
         },
@@ -123,7 +123,7 @@
           "refId": "C"
         }
       ],
-      "title": "Order POST — TPS / RPS",
+      "title": "Order POST — HTTP response rate",
       "type": "timeseries"
     },
     {
@@ -297,7 +297,7 @@
   "time": { "from": "now-15m", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Order API — TPS & Latency",
+  "title": "Order API — Request rate & latency",
   "uid": "order-api-tps",
   "version": 2
 }

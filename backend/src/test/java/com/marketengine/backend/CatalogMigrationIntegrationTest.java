@@ -19,9 +19,14 @@ class CatalogMigrationIntegrationTest {
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
     private FluentConfiguration migrations(String schema) {
+        return migrations(schema, 13);
+    }
+
+    private FluentConfiguration migrations(String schema, int productCount) {
         return Flyway.configure().dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
                 .schemas(schema).locations("classpath:db/migration")
-                .placeholders(Map.of("catalogProductCount", "13", "catalogAsOf", "2026-11-01T00:00:00Z", "catalogSeed", "42"));
+                .placeholders(Map.of("catalogProductCount", Integer.toString(productCount),
+                        "catalogAsOf", "2026-11-01T00:00:00Z", "catalogSeed", "42"));
     }
 
     private JdbcTemplate jdbc() {
@@ -35,7 +40,7 @@ class CatalogMigrationIntegrationTest {
         jdbc.update("insert into upgrade.product_search_outbox (product_id) values (1)");
         var before = jdbc.queryForList("select id, stock_quantity from upgrade.products order by id");
         var orders = jdbc.queryForList("select id, quantity, status from upgrade.orders order by id");
-        var flyway = migrations("upgrade").load();
+        var flyway = migrations("upgrade", 1000).load();
         flyway.migrate();
         flyway.validate();
         assertThat(before).hasSize(13);
@@ -43,6 +48,19 @@ class CatalogMigrationIntegrationTest {
         assertThat(jdbc.queryForList("select id, quantity, status from upgrade.orders order by id")).isEqualTo(orders);
         assertThat(jdbc.queryForObject("select count(*) from upgrade.product_search_outbox where enqueued_at is not null", Long.class)).isOne();
         assertThat(flyway.migrate().migrationsExecuted).isZero();
+    }
+
+    @Test
+    void originalV8CatalogIsNotReplacedWhenTheDefaultSeedSizeChanges() {
+        migrations("legacy").target("8").load().migrate();
+        var jdbc = jdbc();
+        var before = jdbc.queryForList("select id, stock_quantity from legacy.products order by id");
+        var flyway = migrations("legacy", 1000).load();
+        flyway.migrate();
+        flyway.validate();
+        assertThat(before).hasSize(13);
+        assertThat(jdbc.queryForList("select id, stock_quantity from legacy.products order by id")).isEqualTo(before);
+        assertThat(jdbc.queryForObject("select count(*) from legacy.orders where requested_quantity <> quantity", Integer.class)).isZero();
     }
 
     @Test
