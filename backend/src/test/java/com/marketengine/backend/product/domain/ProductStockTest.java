@@ -13,25 +13,20 @@ import com.marketengine.backend.common.exception.ErrorCode;
 class ProductStockTest {
 
     @Test
-    void decreaseStock_reducesQuantity() {
-        Product product = sampleProduct(10);
-
-        product.decreaseStock(1);
-
-        assertThat(product.getStockQuantity()).isEqualTo(9);
+    void zeroStockIsDisplayedAsSoldOut() {
+        assertThat(sampleProduct(0, "ACTIVE").getStatus()).isEqualTo("OUT_OF_STOCK");
     }
 
     @Test
-    void decreaseStock_throwsWhenInsufficient() {
-        Product product = sampleProduct(1);
-
-        assertThatThrownBy(() -> product.decreaseStock(2))
+    void saleStatusIsValidatedAndDiscontinuationIsIndependentOfStock() {
+        assertThat(sampleProduct(5, "OUT_OF_STOCK").getStatus()).isEqualTo("ACTIVE");
+        assertThat(sampleProduct(5, "DISCONTINUED").getStatus()).isEqualTo("DISCONTINUED");
+        assertThatThrownBy(() -> sampleProduct(1, "UNKNOWN"))
                 .isInstanceOf(BusinessException.class)
-                .satisfies(ex -> assertThat(((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.INSUFFICIENT_STOCK));
-        assertThat(product.getStockQuantity()).isEqualTo(1);
+                .satisfies(ex -> assertThat(((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.INVALID_REQUEST));
     }
 
-    private static Product sampleProduct(int stockQuantity) {
+    private static Product sampleProduct(int stockQuantity, String status) {
         return new Product(
                 "sample",
                 new BigDecimal("10.00"),
@@ -41,7 +36,7 @@ class ProductStockTest {
                 "BRAND",
                 "BLACK",
                 "UNISEX",
-                "ACTIVE",
+                status,
                 0
         );
     }

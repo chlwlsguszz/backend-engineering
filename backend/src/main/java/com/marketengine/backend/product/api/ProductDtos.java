@@ -43,7 +43,8 @@ public final class ProductDtos {
             @NotBlank String color,
             @NotBlank String gender,
             @NotBlank String status,
-            @Min(0) int popularityScore
+            @Min(0) int popularityScore,
+            @NotNull @PositiveOrZero Long version
     ) {
     }
 
@@ -89,7 +90,8 @@ public final class ProductDtos {
             String status,
             int popularityScore,
             OffsetDateTime createdAt,
-            OffsetDateTime updatedAt
+            OffsetDateTime updatedAt,
+            long version
     ) {
         public static ProductDetailResponse from(Product product) {
             return new ProductDetailResponse(
@@ -105,7 +107,8 @@ public final class ProductDtos {
                     product.getStatus(),
                     product.getPopularityScore(),
                     product.getCreatedAt(),
-                    product.getUpdatedAt()
+                    product.getUpdatedAt(),
+                    product.getVersion()
             );
         }
     }

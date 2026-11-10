@@ -29,6 +29,9 @@ import com.marketengine.backend.order.domain.OrderRepository;
 import com.marketengine.backend.order.domain.OrderStatus;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductCategory;
+import com.marketengine.backend.product.infrastructure.ProductInventory;
+import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class OrderServiceTest {
@@ -38,6 +41,12 @@ class OrderServiceTest {
 
     @Mock
     private OrderCreateExecutor orderCreateExecutor;
+
+    @Mock
+    private ProductInventory inventory;
+
+    @Mock
+    private ProductSearchOutbox outbox;
 
     @InjectMocks
     private OrderService orderService;
@@ -102,12 +111,15 @@ class OrderServiceTest {
                 100
         );
         Order order = new Order(member, product, 1, new BigDecimal("30.00"), OrderStatus.CREATED, "key-1");
-        when(orderRepository.findById(10L)).thenReturn(Optional.of(order));
+        ReflectionTestUtils.setField(product, "id", 2L);
+        when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
 
         OrderResponse response = orderService.update(10L, new UpdateOrderRequest(OrderStatus.CONFIRMED, 2));
 
         assertThat(response.status()).isEqualTo(OrderStatus.CONFIRMED);
         assertThat(response.quantity()).isEqualTo(2);
         assertThat(response.totalAmount()).isEqualByComparingTo("60.00");
+        verify(inventory).reserve(2L, 1);
+        verify(outbox).enqueue(2L);
     }
 }

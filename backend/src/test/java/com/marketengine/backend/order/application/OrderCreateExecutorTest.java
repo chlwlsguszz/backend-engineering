@@ -29,6 +29,7 @@ import com.marketengine.backend.order.domain.OrderStatus;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductCategory;
 import com.marketengine.backend.product.domain.ProductRepository;
+import com.marketengine.backend.product.infrastructure.ProductInventory;
 import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
 
 @ExtendWith(MockitoExtension.class)
@@ -46,6 +47,9 @@ class OrderCreateExecutorTest {
     private ProductRepository productRepository;
 
     @Mock
+    private ProductInventory inventory;
+
+    @Mock
     private ProductSearchOutbox productSearchOutbox;
 
     @InjectMocks
@@ -56,7 +60,8 @@ class OrderCreateExecutorTest {
         Product product = productWithFiveUnits();
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
 
-        when(productRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(product));
+        when(inventory.reserve(2L, 3)).thenReturn(new BigDecimal("30.00"));
+        when(productRepository.getReferenceById(2L)).thenReturn(product);
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         OrderResponse response = orderCreateExecutor.execute(
@@ -67,24 +72,22 @@ class OrderCreateExecutorTest {
         assertThat(response.totalAmount()).isEqualByComparingTo("90.00");
         assertThat(response.status()).isEqualTo(OrderStatus.CREATED);
         assertThat(response.idempotencyKey()).isEqualTo("key-1");
-        assertThat(product.getStockQuantity()).isEqualTo(2);
+        verify(inventory).reserve(2L, 3);
         verify(productSearchOutbox).enqueue(2L);
     }
 
     @Test
     void execute_throwsInsufficientStockWhenQuantityExceedsStock() {
-        Product product = productWithFiveUnits();
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
 
-        when(productRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(product));
+        when(inventory.reserve(2L, 6)).thenThrow(new BusinessException(ErrorCode.INSUFFICIENT_STOCK));
 
         assertThatThrownBy(() -> orderCreateExecutor.execute(
                 new CreateOrderRequest(1L, 2L, 6, "key-1")
         ))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(ex -> assertThat(((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.INSUFFICIENT_STOCK));
-        assertThat(product.getStockQuantity()).isEqualTo(5);
-        verifyNoInteractions(productSearchOutbox);
+        verifyNoInteractions(productRepository, productSearchOutbox);
     }
 
     @Test

@@ -6,6 +6,7 @@ import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertAll;
 
 import java.time.Duration;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -13,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.postgresql.util.PSQLException;
@@ -20,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -32,6 +35,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import com.marketengine.backend.common.exception.BusinessException;
 import com.marketengine.backend.common.exception.ErrorCode;
 import com.marketengine.backend.order.api.OrderDtos.CreateOrderRequest;
+import com.marketengine.backend.order.api.OrderDtos.UpdateOrderRequest;
+import com.marketengine.backend.order.domain.OrderStatus;
+import com.marketengine.backend.product.api.ProductDtos.UpdateProductRequest;
+import com.marketengine.backend.product.application.ProductService;
 import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
 
 import io.micrometer.core.instrument.MeterRegistry;
@@ -67,6 +74,132 @@ class OrderStockOutboxIntegrationTest {
     @Autowired private ProductSearchOutbox outbox;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private TransactionTemplate transaction;
+    @Autowired private ProductService products;
+    @Autowired private OrderCreateExecutor orderWriter;
+
+    @BeforeEach
+    void seedBuyer() {
+        jdbc.update("""
+            INSERT INTO members (id, email, name) VALUES (1, 'stock-buyer@local.test', 'buyer')
+            ON CONFLICT (id) DO NOTHING
+            """);
+    }
+
+    @Test
+    void quantityChangesPreserveUnitPriceAndOriginalReplayAfterCancel() {
+        long product = 1101L;
+        insertProductWithTenUnits(product);
+        var request = new CreateOrderRequest(1L, product, 3, "lifecycle");
+        var initial = orders.create(request);
+        checkAndCompleteOutbox(product, 7);
+        jdbc.update("UPDATE products SET price_amount = 25 WHERE id = ?", product);
+        var increased = orders.update(initial.id(), new UpdateOrderRequest(OrderStatus.CONFIRMED, 5));
+        assertThat(increased.totalAmount()).isEqualByComparingTo("50");
+        checkAndCompleteOutbox(product, 5);
+        assertThat(orders.create(request).quantity()).isEqualTo(5);
+        assertThat(orders.update(initial.id(), new UpdateOrderRequest(OrderStatus.CONFIRMED, 5)).quantity()).isEqualTo(5);
+        assertThat(outbox.claim(10)).isEmpty();
+        assertThatThrownBy(() -> orders.update(initial.id(), new UpdateOrderRequest(OrderStatus.CONFIRMED, 11)))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.INSUFFICIENT_STOCK));
+        assertThat(orders.get(initial.id()).quantity()).isEqualTo(5);
+        assertThat(outbox.claim(10)).isEmpty();
+        orders.update(initial.id(), new UpdateOrderRequest(OrderStatus.CONFIRMED, 2));
+        checkAndCompleteOutbox(product, 8);
+        orders.delete(initial.id());
+        checkAndCompleteOutbox(product, 10);
+        orders.delete(initial.id());
+        assertThat(orders.create(request).status()).isEqualTo(OrderStatus.CANCELLED);
+        assertThat(outbox.claim(10)).isEmpty();
+        assertThatThrownBy(() -> orders.update(initial.id(), new UpdateOrderRequest(OrderStatus.CREATED, 2)))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.CONFLICT));
+    }
+
+    @Test
+    void twoCancellationsRacingWithAnEditRestoreStockExactlyOnce() throws Exception {
+        long product = 1102L;
+        insertProductWithTenUnits(product);
+        long order = orders.create(new CreateOrderRequest(1L, product, 3, "cancel-race")).id();
+        checkAndCompleteOutbox(product, 7);
+        try (var callers = Executors.newFixedThreadPool(3)) {
+            var futures = transaction.execute(status -> {
+                jdbc.queryForObject("SELECT id FROM orders WHERE id = ? FOR UPDATE", Long.class, order);
+                var cancel1 = callers.submit(() -> orders.delete(order));
+                var cancel2 = callers.submit(() -> orders.delete(order));
+                var edit = callers.submit(() -> {
+                    try {
+                        orders.update(order, new UpdateOrderRequest(OrderStatus.CREATED, 5));
+                    } catch (BusinessException ex) {
+                        assertThat(ex.errorCode()).isEqualTo(ErrorCode.CONFLICT);
+                    }
+                });
+                await().atMost(Duration.ofSeconds(10)).until(() -> jdbc.queryForObject("""
+                        SELECT count(DISTINCT pid) FROM pg_locks WHERE relation = 'orders'::regclass
+                          AND mode = 'RowShareLock' AND granted AND cardinality(pg_blocking_pids(pid)) > 0
+                        """, Integer.class) == 3);
+                return List.of(cancel1, cancel2, edit);
+            });
+            for (var call : futures) call.get(10, TimeUnit.SECONDS);
+        }
+        assertThat(orders.get(order).status()).isEqualTo(OrderStatus.CANCELLED);
+        checkAndCompleteOutbox(product, 10);
+    }
+
+    @Test
+    void staleAdminWriteCannotOverwriteLastUnitAndCancellationPreservesDiscontinuation() {
+        long product = 1103L;
+        insertProductWithTenUnits(product);
+        long version = products.get(product).version();
+        var order = orders.create(new CreateOrderRequest(1L, product, 10, "admin-race"));
+        checkAndCompleteOutbox(product, 0);
+        var soldOut = products.get(product);
+        assertThat(soldOut.status()).isEqualTo("OUT_OF_STOCK");
+        var stale = new UpdateProductRequest("Replaced", BigDecimal.TEN, 10, "old stock", soldOut.category(),
+                "ACME", "BLACK", "UNISEX", "ACTIVE", 0, version);
+        assertThatThrownBy(() -> products.update(product, stale)).isInstanceOfSatisfying(BusinessException.class,
+                e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.CONFLICT));
+        var discontinue = new UpdateProductRequest("Replaced", BigDecimal.TEN, 0, "discontinued", soldOut.category(),
+                "ACME", "BLACK", "UNISEX", "DISCONTINUED", 0, soldOut.version());
+        products.update(product, discontinue);
+        orders.delete(order.id());
+        checkAndCompleteOutbox(product, 10);
+        assertThat(products.get(product).status()).isEqualTo("DISCONTINUED");
+        assertThatThrownBy(() -> orders.create(new CreateOrderRequest(1L, product, 1, "discontinued")))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.CONFLICT));
+        assertThat(outbox.claim(10)).isEmpty();
+    }
+
+    @Test
+    void orderCommittingWhileAdminFlushWaitsWinsTheVersionCheck() throws Exception {
+        long product = 1104L;
+        insertProductWithTenUnits(product);
+        var previous = products.get(product);
+        var oldView = new UpdateProductRequest("Changed name", BigDecimal.TEN, 10, "old inventory", previous.category(),
+                "ACME", "BLACK", "UNISEX", "ACTIVE", 0, previous.version());
+        try (var caller = Executors.newSingleThreadExecutor()) {
+            var admin = transaction.execute(tx -> {
+                // The real order writer joins this transaction and retains the inventory write lock.
+                orderWriter.execute(new CreateOrderRequest(1L, product, 3, "admin-flush-race"));
+                var pending = caller.submit(() -> products.update(product, oldView));
+                await().atMost(Duration.ofSeconds(10)).until(() -> jdbc.queryForObject("""
+                        SELECT count(DISTINCT pid) FROM pg_locks WHERE relation = 'products'::regclass
+                          AND mode = 'RowExclusiveLock' AND granted AND cardinality(pg_blocking_pids(pid)) > 0
+                        """, Integer.class) == 1);
+                return pending;
+            });
+            assertThatThrownBy(() -> admin.get(10, TimeUnit.SECONDS)).hasCauseInstanceOf(OptimisticLockingFailureException.class);
+        }
+        assertThat(products.get(product).name()).isEqualTo("Test SKU");
+        checkAndCompleteOutbox(product, 7);
+    }
+
+    private void checkAndCompleteOutbox(long productId, int units) {
+        var entries = outbox.claim(10);
+        assertThat(entries).singleElement().satisfies(entry -> {
+            assertThat(entry.productId()).isEqualTo(productId);
+            assertThat(entry.document().getStockQuantity()).isEqualTo(units);
+        });
+        outbox.complete(entries);
+    }
 
     @Test
     void ordersPublishCommittedStockAndAnIdempotentReplayDoesNotRequeueIt() {
@@ -114,7 +247,7 @@ class OrderStockOutboxIntegrationTest {
                 await().alias("all orders waiting for the product row").pollInterval(Duration.ofMillis(25))
                         .atMost(Duration.ofSeconds(10)).until(() -> jdbc.queryForObject("""
                                 SELECT count(DISTINCT pid) FROM pg_locks
-                                WHERE relation = 'products'::regclass AND mode = 'RowShareLock' AND granted
+                                WHERE relation = 'products'::regclass AND mode = 'RowExclusiveLock' AND granted
                                   AND cardinality(pg_blocking_pids(pid)) > 0
                                 """, Integer.class) == callerCount);
                 return submitted;

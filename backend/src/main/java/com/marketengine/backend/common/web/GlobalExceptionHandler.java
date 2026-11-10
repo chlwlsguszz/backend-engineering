@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -78,6 +79,12 @@ public class GlobalExceptionHandler {
         log.debug("Pessimistic lock acquisition failed", ex);
         ApiError apiError = ApiError.of(ErrorCode.CONFLICT.code(), "Product is busy. Please retry.");
         return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail(apiError));
+    }
+
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ResponseEntity<ApiResponse<Void>> handleStaleUpdate(OptimisticLockingFailureException ex) {
+        ApiError error = ApiError.of(ErrorCode.CONFLICT.code(), "Product changed. Reload before updating.");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail(error));
     }
 
     @ExceptionHandler(Exception.class)

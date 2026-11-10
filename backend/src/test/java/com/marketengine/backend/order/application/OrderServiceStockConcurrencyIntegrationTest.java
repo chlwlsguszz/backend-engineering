@@ -12,7 +12,6 @@ import java.util.concurrent.Future;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -22,7 +21,6 @@ import com.marketengine.backend.order.domain.OrderRepository;
 import com.marketengine.backend.product.domain.ProductRepository;
 import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
 
-@SpringBootTest
 @MockitoBean(types = ProductSearchOutbox.class)
 @TestPropertySource(properties = {
         "marketengine.elasticsearch.enabled=false",
@@ -34,7 +32,7 @@ import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbo
                 + "org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration",
         "spring.cache.type=simple"
 })
-class OrderServiceStockConcurrencyIntegrationTest {
+class OrderServiceStockConcurrencyIntegrationTest extends OrderPostgresTest {
 
     private static final int INITIAL_STOCK = 5;
     private static final int CONCURRENT_REQUESTS = 20;

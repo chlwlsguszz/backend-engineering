@@ -80,6 +80,9 @@ public class ProductService {
     @Transactional
     public ProductDetailResponse update(Long productId, UpdateProductRequest request) {
         Product product = findProduct(productId);
+        if (request.version() == null || product.getVersion() != request.version()) {
+            throw new BusinessException(ErrorCode.CONFLICT, "Product changed. Reload before updating.");
+        }
         product.changeInfo(
                 request.name(),
                 request.priceAmount(),

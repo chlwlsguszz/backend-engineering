@@ -16,6 +16,7 @@ import com.marketengine.backend.order.domain.OrderRepository;
 import com.marketengine.backend.order.domain.OrderStatus;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductRepository;
+import com.marketengine.backend.product.infrastructure.ProductInventory;
 import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
 
 import lombok.RequiredArgsConstructor;
@@ -27,6 +28,7 @@ public class OrderCreateExecutor {
     private final OrderRepository orderRepository;
     private final MemberRepository memberRepository;
     private final ProductRepository productRepository;
+    private final ProductInventory inventory;
     private final ProductSearchOutbox productSearchOutbox;
 
     @Transactional
@@ -41,7 +43,7 @@ public class OrderCreateExecutor {
 
     private OrderResponse replayResponse(Order existing, CreateOrderRequest request) {
         if (!request.productId().equals(existing.getProduct().getId())
-                || existing.getQuantity() != request.quantity()) {
+                || existing.getRequestedQuantity() != request.quantity()) {
             throw new BusinessException(
                     ErrorCode.IDEMPOTENCY_KEY_CONFLICT,
                     "Idempotency key already used with a different request"
@@ -53,17 +55,15 @@ public class OrderCreateExecutor {
     private OrderResponse createNewOrder(CreateOrderRequest request) {
         Member member = memberRepository.findById(request.memberId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Member not found"));
-        Product product = productRepository.findByIdForUpdate(request.productId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Product not found"));
-
-        product.decreaseStock(request.quantity());
+        var unitPrice = inventory.reserve(request.productId(), request.quantity());
+        Product product = productRepository.getReferenceById(request.productId());
 
         Order saved = orderRepository.save(
                 new Order(
                         member,
                         product,
                         request.quantity(),
-                        product.getPriceAmount(),
+                        unitPrice,
                         OrderStatus.CREATED,
                         request.idempotencyKey()
                 )
