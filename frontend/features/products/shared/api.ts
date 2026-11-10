@@ -7,26 +7,35 @@ import type {
   ProductPageResponse,
 } from "./types";
 
-type ApiResult<T> = { data: T | null; errorMessage: string };
+type ApiResult<T> =
+  | { data: T; errorMessage: ""; errorCode?: undefined; retryable?: undefined }
+  | { data: null; errorMessage: string; errorCode?: string; retryable: boolean };
 
 async function requestBackend<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   try {
     const response = await fetch(url, init);
     const body: ApiEnvelope<T> = await response.json();
 
-    if (!response.ok || !body.success) {
-      return { data: null, errorMessage: body.error?.message ?? "요청 처리 실패" };
+    if (!body.success || !response.ok) {
+      const error = !body.success ? body.error : undefined;
+      return {
+        data: null,
+        errorCode: error?.code,
+        errorMessage: error?.message ?? "요청 처리 실패",
+        retryable: response.status >= 500 || response.status === 408 || response.status === 429 || error?.code === "CONFLICT",
+      };
     }
 
     return { data: body.data, errorMessage: "" };
   } catch {
-    return { data: null, errorMessage: "백엔드 연결 실패: 서버가 실행 중인지 확인하세요." };
+    return { data: null, errorMessage: "서버 응답을 확인하지 못했습니다.", retryable: true };
   }
 }
 
 export async function fetchProductPage(
   page: number,
   filters: ProductFilterState,
+  signal?: AbortSignal,
 ): Promise<ApiResult<ProductPageResponse>> {
   const params = new URLSearchParams({
     page: String(page),
@@ -42,17 +51,18 @@ export async function fetchProductPage(
   if (filters.minPrice.trim() !== "") params.set("minPrice", filters.minPrice.trim());
   if (filters.maxPrice.trim() !== "") params.set("maxPrice", filters.maxPrice.trim());
 
-  return requestBackend<ProductPageResponse>(`/backend/api/products?${params.toString()}`);
+  return requestBackend<ProductPageResponse>(`/backend/api/products?${params.toString()}`, { signal });
 }
 
-export async function fetchProductDetail(productId: string): Promise<ApiResult<ProductDetail>> {
-  return requestBackend<ProductDetail>(`/backend/api/products/${productId}`);
+export async function fetchProductDetail(productId: string, signal?: AbortSignal): Promise<ApiResult<ProductDetail>> {
+  return requestBackend<ProductDetail>(`/backend/api/products/${productId}`, { signal, cache: "no-store" });
 }
 
 export async function createOrder(payload: {
   memberId: number;
   productId: number;
   quantity: number;
+  idempotencyKey: string;
 }): Promise<ApiResult<OrderResponse>> {
   return requestBackend<OrderResponse>("/backend/api/orders", {
     method: "POST",

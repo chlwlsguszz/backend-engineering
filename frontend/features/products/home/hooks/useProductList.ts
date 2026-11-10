@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { fetchProductPage } from "../../shared/api";
 import { PAGE_SIZE } from "../../shared/constants";
@@ -17,12 +17,12 @@ const INITIAL_FILTERS: ProductFilterState = {
 
 export function useProductList() {
   const [products, setProducts] = useState<Product[]>([]);
-  const [filters, setFilters] = useState<ProductFilterState>(INITIAL_FILTERS);
+  const [request, setRequest] = useState({ filters: INITIAL_FILTERS, page: 0 });
   const [searchInput, setSearchInput] = useState("");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
-  const [currentPage, setCurrentPage] = useState(0);
+  const [loadedPage, setLoadedPage] = useState(-1);
   const [hasNext, setHasNext] = useState(false);
-  const [loadingProducts, setLoadingProducts] = useState(false);
+  const [loadingProducts, setLoadingProducts] = useState(true);
   const [resultMessage, setResultMessage] = useState("");
   const lastFetchMetricRef = useRef<{
     mode: "initial" | "loadMore";
@@ -32,23 +32,21 @@ export function useProductList() {
     page: number;
   } | null>(null);
 
-  const hasProducts = useMemo(() => products.length > 0, [products]);
+  const activeRequest = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    const { page, filters } = request;
     async function load() {
-      setLoadingProducts(true);
-      setResultMessage("");
       const startedAt = performance.now();
-      const mode = currentPage === 0 ? "initial" : "loadMore";
+      const mode = page === 0 ? "initial" : "loadMore";
 
-      const result = await fetchProductPage(currentPage, filters);
+      const result = await fetchProductPage(page, filters, controller.signal);
+      if (controller.signal.aborted) return;
       const responseAt = performance.now();
 
       if (!result.data) {
-        if (currentPage === 0) {
-          setProducts([]);
-          setHasNext(false);
-        }
         setResultMessage(result.errorMessage);
         setLoadingProducts(false);
         return;
@@ -59,49 +57,55 @@ export function useProductList() {
         startedAt,
         responseAt,
         itemCount: data.items.length,
-        page: currentPage,
+        page,
       };
 
-      if (currentPage === 0) {
+      if (page === 0) {
         setProducts(data.items);
       } else {
         setProducts((prev) => [...prev, ...data.items]);
       }
+      setLoadedPage(page);
       setHasNext(data.hasNext);
       setLoadingProducts(false);
     }
 
     void load();
-  }, [currentPage, filters]);
+    return () => controller.abort();
+  }, [request]);
 
   function applyKeywordSearch() {
-    setFilters((prev) => ({ ...prev, keyword: searchInput }));
-    setCurrentPage(0);
+    patchFilters({ keyword: searchInput });
   }
 
   function patchFilters(patch: Partial<ProductFilterState>) {
-    setFilters((prev) => ({ ...prev, ...patch }));
-    setCurrentPage(0);
+    activeRequest.current?.abort();
+    setProducts([]);
+    setHasNext(false);
+    setLoadedPage(-1);
+    setLoadingProducts(true);
+    setResultMessage("");
+    setRequest((prev) => ({ filters: { ...prev.filters, ...patch }, page: 0 }));
   }
 
   function loadMore() {
     if (loadingProducts || !hasNext) {
       return;
     }
-    setCurrentPage((prev) => prev + 1);
+    setLoadingProducts(true);
+    setResultMessage("");
+    setRequest((prev) => ({ filters: prev.filters, page: loadedPage + 1 }));
   }
 
   return {
     products,
-    filters,
+    filters: request.filters,
     searchInput,
     isFilterOpen,
     hasNext,
-    loadingProducts,
-    loadingInitial: loadingProducts && currentPage === 0,
-    loadingMore: loadingProducts && currentPage > 0,
+    loadingInitial: loadingProducts && request.page === 0,
+    loadingMore: loadingProducts && request.page > 0,
     resultMessage,
-    hasProducts,
     pageSize: PAGE_SIZE,
     setSearchInput,
     setIsFilterOpen,

@@ -39,7 +39,7 @@ public class ProductInventory {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Product not found");
         }
         if (!List.of("ACTIVE", "OUT_OF_STOCK").contains(statuses.getFirst())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "Product is not for sale");
+            throw new BusinessException(ErrorCode.PRODUCT_NOT_FOR_SALE);
         }
         throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK, "Insufficient stock");
     }

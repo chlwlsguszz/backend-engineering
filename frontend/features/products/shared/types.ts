@@ -21,14 +21,9 @@ export type ProductDetail = Product & {
   updatedAt: string;
 };
 
-export type ApiEnvelope<T> = {
-  success: boolean;
-  data: T;
-  error?: {
-    code: string;
-    message: string;
-  };
-};
+export type ApiEnvelope<T> =
+  | { success: true; data: T }
+  | { success: false; error: { code: string; message: string } };
 
 export type ProductPageResponse = {
   items: Product[];
@@ -56,5 +51,6 @@ export type OrderResponse = {
   unitPrice: number;
   status: string;
   totalAmount: number;
+  idempotencyKey: string;
   createdAt: string;
 };

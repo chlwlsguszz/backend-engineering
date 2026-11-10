@@ -164,7 +164,7 @@ class OrderStockOutboxIntegrationTest {
         checkAndCompleteOutbox(product, 10);
         assertThat(products.get(product).status()).isEqualTo("DISCONTINUED");
         assertThatThrownBy(() -> orders.create(new CreateOrderRequest(1L, product, 1, "discontinued")))
-                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.CONFLICT));
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.PRODUCT_NOT_FOR_SALE));
         assertThat(outbox.claim(10)).isEmpty();
     }
 
