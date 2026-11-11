@@ -70,7 +70,7 @@ class ProductFeedRedisIntegrationTest {
             @Autowired MeterRegistry meters) {
         var query = new ProductListQuery("M42", null, null, null, null, null, null, "LATEST", 0, 12);
         var key = ProductListFeedKeyResolver.resolve(query).orElseThrow();
-        var item = new ProductSummaryResponse(8L, "M42", BigDecimal.TEN, 4, ProductCategory.TOP,
+        var item = new ProductSummaryResponse(8L, "M42", BigDecimal.TEN, true, ProductCategory.TOP,
                 "Brand", "BLACK", "UNISEX", 1, OffsetDateTime.parse("2026-01-01T00:00:00Z"));
         when(origin.search(query)).thenReturn(new SliceImpl<>(List.of(item), query.pageable(), false));
         var first = feed.get(key);
@@ -88,4 +88,3 @@ class ProductFeedRedisIntegrationTest {
         verify(origin, times(2)).search(query);
     }
 }
-

@@ -83,6 +83,7 @@ try {
     Read-Catalog $true
 
     Invoke-Compose @('stop','redis')
+    Start-Sleep -Seconds 3 # Expire L1 so the check actually exercises the failed Redis lookup.
     $page = Send-Api GET 'products?size=12' $null
     if ($page.items.Count -ne 12) { throw 'Redis outage did not return a full search page' }
     Invoke-Compose @('start','redis')
@@ -98,15 +99,20 @@ try {
     Wait-For 'observable ES outage backlog' { (Get-Metrics) -match '(?m)^product_outbox_pending(?:\{[^}]*\})?\s+2(?:\.0)?\s*$' }
     Invoke-Compose @('start','elasticsearch')
     $es = Get-Endpoint elasticsearch 9200
-    Wait-For 'ES stock and tombstone after recovery' {
-        (Invoke-RestMethod "$es/products/_doc/$($product.id)")._source.stockQuantity -eq 7 -and
+    Wait-For 'ES availability and tombstone after recovery' {
+        (Invoke-RestMethod "$es/products/_doc/$($product.id)")._source.available -eq $true -and
         (Invoke-RestMethod "$es/products/_doc/$($other.id)")._source.outboxDeleted -eq $true
     }
+    if ((Send-Api GET "products/$($product.id)" $null).stockQuantity -ne 7) { throw 'Exact detail stock was not preserved' }
+    $lastOrder = Send-Api POST orders @{ memberId=1; productId=$product.id; quantity=7; idempotencyKey='smoke-last-units' }
+    Wait-For 'sold out in search' { (Invoke-RestMethod "$es/products/_doc/$($product.id)")._source.available -eq $false }
+    Send-Api DELETE "orders/$($lastOrder.id)" $null | Out-Null
+    Wait-For 'available after restock' { (Invoke-RestMethod "$es/products/_doc/$($product.id)")._source.available -eq $true }
     Send-Api DELETE "orders/$($order.id)" $null | Out-Null
     Send-Api DELETE "orders/$($order.id)" $null | Out-Null
     $replay = Send-Api POST orders @{ memberId=1; productId=$product.id; quantity=2; idempotencyKey='smoke-replay' }
     if ($replay.id -ne $order.id -or $replay.status -ne 'CANCELLED') { throw 'Cancellation replay failed' }
-    Wait-For 'restored ES stock' { (Invoke-RestMethod "$es/products/_doc/$($product.id)")._source.stockQuantity -eq 10 }
+    if ((Send-Api GET "products/$($product.id)" $null).stockQuantity -ne 10) { throw 'Cancellation did not restore exact DB stock' }
     Wait-For 'drained outbox' { (Get-Metrics) -match '(?m)^product_outbox_pending(?:\{[^}]*\})?\s+0(?:\.0)?\s*$' }
     (Get-Metrics) -split "`n" | Where-Object { $_ -match '^product_outbox_' }
 

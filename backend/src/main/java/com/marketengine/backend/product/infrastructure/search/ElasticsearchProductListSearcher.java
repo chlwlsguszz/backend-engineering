@@ -2,6 +2,9 @@ package com.marketengine.backend.product.infrastructure.search;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Collections;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.domain.Pageable;
@@ -12,6 +15,7 @@ import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.SearchHit;
 import org.springframework.data.elasticsearch.core.SearchHits;
 import org.springframework.stereotype.Component;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
 import com.marketengine.backend.product.application.ProductListSearcher;
@@ -34,6 +38,7 @@ import lombok.RequiredArgsConstructor;
 public class ElasticsearchProductListSearcher implements ProductListSearcher {
 
     private final ElasticsearchOperations elasticsearchOperations;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
     public Slice<ProductSummaryResponse> search(ProductListQuery criteria) {
@@ -50,9 +55,13 @@ public class ElasticsearchProductListSearcher implements ProductListSearcher {
         };
         SearchHits<ProductDocument> hits = elasticsearchOperations.search(sliceQuery, ProductDocument.class);
 
-        List<ProductSummaryResponse> items = hits.getSearchHits().stream()
+        List<ProductDocument> documents = hits.getSearchHits().stream()
                 .map(SearchHit::getContent)
-                .map(ElasticsearchProductListSearcher::toSummary)
+                .toList();
+
+        Map<Long, Boolean> legacyAvailability = readLegacyAvailability(documents);
+        List<ProductSummaryResponse> items = documents.stream()
+                .map(document -> toSummary(document, legacyAvailability))
                 .toList();
 
         boolean hasNext = items.size() > pageable.getPageSize();
@@ -121,12 +130,29 @@ public class ElasticsearchProductListSearcher implements ProductListSearcher {
         );
     }
 
-    private static ProductSummaryResponse toSummary(ProductDocument document) {
+    private Map<Long, Boolean> readLegacyAvailability(List<ProductDocument> documents) {
+        List<Long> legacyIds = documents.stream().filter(document -> document.getAvailable() == null)
+                .map(ProductDocument::getId).toList();
+        if (legacyIds.isEmpty()) return Map.of();
+
+        // Old indices contain a quantity, but not sale status. One bounded query keeps them usable
+        // until the user rebuilds the index, without guessing that positive stock means on sale.
+        String placeholders = String.join(",", Collections.nCopies(legacyIds.size(), "?"));
+        Map<Long, Boolean> availability = new HashMap<>();
+        jdbcTemplate.query("SELECT id, (status = 'ACTIVE' AND stock_quantity > 0) AS available "
+                        + "FROM products WHERE id IN (" + placeholders + ")",
+                result -> { availability.put(result.getLong("id"), result.getBoolean("available")); },
+                legacyIds.toArray());
+        return availability;
+    }
+
+    private static ProductSummaryResponse toSummary(ProductDocument document, Map<Long, Boolean> legacyAvailability) {
         return new ProductSummaryResponse(
                 document.getId(),
                 document.getName(),
                 document.getPriceAmount(),
-                document.getStockQuantity(),
+                document.getAvailable() != null ? document.getAvailable()
+                        : legacyAvailability.getOrDefault(document.getId(), false),
                 ProductCategory.valueOf(document.getCategory()),
                 document.getBrand(),
                 document.getColor(),

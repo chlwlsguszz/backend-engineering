@@ -25,6 +25,6 @@ public class JpaProductListSearcher implements ProductListSearcher {
     @Override
     @Transactional(readOnly = true)
     public Slice<ProductSummaryResponse> search(ProductListQuery query) {
-        return productRepository.search(query).map(ProductSummaryResponse::from);
+        return productRepository.search(query);
     }
 }

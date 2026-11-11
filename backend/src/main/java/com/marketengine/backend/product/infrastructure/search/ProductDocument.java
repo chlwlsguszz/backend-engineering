@@ -36,8 +36,9 @@ public class ProductDocument {
     @Field(type = FieldType.Double)
     private BigDecimal priceAmount;
 
-    @Field(type = FieldType.Integer)
-    private int stockQuantity;
+    // Nullable while reading an index created before availability replaced exact inventory.
+    @Field(type = FieldType.Boolean)
+    private Boolean available;
 
     @Field(type = FieldType.Keyword)
     private String category;
@@ -61,7 +62,7 @@ public class ProductDocument {
             Long id,
             String name,
             BigDecimal priceAmount,
-            int stockQuantity,
+            Boolean available,
             String category,
             String brand,
             String color,
@@ -72,7 +73,7 @@ public class ProductDocument {
         this.id = id;
         this.name = name;
         this.priceAmount = priceAmount;
-        this.stockQuantity = stockQuantity;
+        this.available = available;
         this.category = category;
         this.brand = brand;
         this.color = color;
@@ -89,7 +90,7 @@ public class ProductDocument {
     boolean matchesProjection(ProductDocument other) {
         return id.equals(other.id) && Objects.equals(name, other.name)
                 && other.priceAmount != null && priceAmount.compareTo(other.priceAmount) == 0
-                && stockQuantity == other.stockQuantity && popularityScore == other.popularityScore
+                && Objects.equals(available, other.available) && popularityScore == other.popularityScore
                 && Objects.equals(category, other.category) && Objects.equals(brand, other.brand)
                 && Objects.equals(color, other.color) && Objects.equals(gender, other.gender)
                 && other.createdAt != null && createdAt.toInstant().toEpochMilli() == other.createdAt.toInstant().toEpochMilli();

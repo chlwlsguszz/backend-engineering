@@ -26,12 +26,12 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
 
     @Query("""
-            SELECT o FROM Order o
-            JOIN FETCH o.member
-            JOIN FETCH o.product
-            WHERE o.member.id = :memberId AND o.idempotencyKey = :idempotencyKey
+            select new com.marketengine.backend.order.domain.OrderReplay(
+                o.id, o.member.id, o.product.id, o.requestedQuantity, o.quantity, o.unitPrice,
+                o.status, o.totalAmount, o.idempotencyKey, o.createdAt)
+            from Order o where o.member.id = :memberId and o.idempotencyKey = :idempotencyKey
             """)
-    Optional<Order> findByMemberIdAndIdempotencyKey(
+    Optional<OrderReplay> findByMemberIdAndIdempotencyKey(
             @Param("memberId") Long memberId,
             @Param("idempotencyKey") String idempotencyKey
     );

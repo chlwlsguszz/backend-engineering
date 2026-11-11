@@ -7,6 +7,8 @@ import java.util.stream.Collectors;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.jdbc.UncategorizedSQLException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -74,11 +76,24 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.fail(apiError));
     }
 
-    @ExceptionHandler({PessimisticLockingFailureException.class, CannotAcquireLockException.class})
+    @ExceptionHandler({PessimisticLockingFailureException.class, CannotAcquireLockException.class,
+            QueryTimeoutException.class})
     public ResponseEntity<ApiResponse<Void>> handlePessimisticLockingFailure(RuntimeException ex) {
-        log.debug("Pessimistic lock acquisition failed", ex);
-        ApiError apiError = ApiError.of(ErrorCode.CONFLICT.code(), "Product is busy. Please retry.");
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail(apiError));
+        log.debug("Database lock or statement deadline exceeded", ex);
+        ApiError apiError = ApiError.of(ErrorCode.ORDER_BUSY.code(), ErrorCode.ORDER_BUSY.defaultMessage(),
+                Map.of("retryable", true));
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header("Retry-After", "1").body(ApiResponse.fail(apiError));
+    }
+
+    @ExceptionHandler(UncategorizedSQLException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUncategorizedSql(UncategorizedSQLException ex) {
+        // JdbcTemplate's default translator does not classify PostgreSQL 55P03 (lock_not_available).
+        String sqlState = ex.getSQLException().getSQLState();
+        if ("55P03".equals(sqlState) || "57014".equals(sqlState)) {
+            return handlePessimisticLockingFailure(ex);
+        }
+        return handleUnhandled(ex);
     }
 
     @ExceptionHandler(OptimisticLockingFailureException.class)

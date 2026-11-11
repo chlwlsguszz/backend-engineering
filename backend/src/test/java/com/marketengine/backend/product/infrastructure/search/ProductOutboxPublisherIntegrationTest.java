@@ -76,7 +76,7 @@ class ProductOutboxPublisherIntegrationTest {
         assertThat(publisher.publish(List.of(update, create))).containsExactly(update, create);
         operations.indexOps(ProductDocument.class).refresh();
 
-        var searcher = new ElasticsearchProductListSearcher(operations);
+        var searcher = new ElasticsearchProductListSearcher(operations, org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class));
         var products = searcher.search(new ProductListQuery(null, null, null, null, null, null, null, "LATEST", 0, 12));
         assertThat(products.getContent()).extracting(ProductSummaryResponse::name)
                 .containsExactlyInAnyOrder("Legacy", "New");
@@ -86,7 +86,7 @@ class ProductOutboxPublisherIntegrationTest {
     void returnsOnlySuccessfulItemsWhenOneDocumentFailsMapping() {
         var converter = spy(operations.getElasticsearchConverter());
         Entry invalid = new Entry(1, 1, UUID.randomUUID(), document(1, "Invalid"));
-        doReturn(Document.from(Map.of("stockQuantity", "invalid"))).when(converter).mapObject(invalid.document());
+        doReturn(Document.from(Map.of("available", "invalid"))).when(converter).mapObject(invalid.document());
         var publisherWithInvalidDocument = new ProductOutboxPublisher(client, converter);
         Entry valid = new Entry(2, 2, UUID.randomUUID(), document(2, "Valid"));
 
@@ -95,7 +95,7 @@ class ProductOutboxPublisherIntegrationTest {
     }
 
     private static ProductDocument document(long id, String name) {
-        return new ProductDocument(id, name, BigDecimal.TEN, 3, "TOP", "Brand", "BLACK", "UNISEX",
+        return new ProductDocument(id, name, BigDecimal.TEN, true, "TOP", "Brand", "BLACK", "UNISEX",
                 1, OffsetDateTime.parse("2026-01-01T00:00:00Z"));
     }
 }

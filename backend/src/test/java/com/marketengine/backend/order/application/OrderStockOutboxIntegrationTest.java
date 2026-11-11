@@ -56,7 +56,9 @@ import io.micrometer.core.instrument.MeterRegistry;
         "spring.flyway.enabled=true",
         "spring.flyway.placeholders[catalogProductCount]=1",
         "spring.flyway.placeholders[catalogAsOf]=2026-11-01T00:00:00Z",
-        "spring.flyway.placeholders[catalogSeed]=42"
+        "spring.flyway.placeholders[catalogSeed]=42",
+        // These tests intentionally gate competing transactions before releasing all contenders.
+        "marketengine.order.lock-timeout=10s", "marketengine.order.statement-timeout=15s"
 })
 class OrderStockOutboxIntegrationTest {
 
@@ -91,11 +93,11 @@ class OrderStockOutboxIntegrationTest {
         insertProductWithTenUnits(product);
         var request = new CreateOrderRequest(1L, product, 3, "lifecycle");
         var initial = orders.create(request);
-        checkAndCompleteOutbox(product, 7);
+        checkStockWithoutSearchWrite(product, 7);
         jdbc.update("UPDATE products SET price_amount = 25 WHERE id = ?", product);
         var increased = orders.update(initial.id(), new UpdateOrderRequest(OrderStatus.CONFIRMED, 5));
         assertThat(increased.totalAmount()).isEqualByComparingTo("50");
-        checkAndCompleteOutbox(product, 5);
+        checkStockWithoutSearchWrite(product, 5);
         assertThat(orders.create(request).quantity()).isEqualTo(5);
         assertThat(orders.update(initial.id(), new UpdateOrderRequest(OrderStatus.CONFIRMED, 5)).quantity()).isEqualTo(5);
         assertThat(outbox.claim(10)).isEmpty();
@@ -104,9 +106,9 @@ class OrderStockOutboxIntegrationTest {
         assertThat(orders.get(initial.id()).quantity()).isEqualTo(5);
         assertThat(outbox.claim(10)).isEmpty();
         orders.update(initial.id(), new UpdateOrderRequest(OrderStatus.CONFIRMED, 2));
-        checkAndCompleteOutbox(product, 8);
+        checkStockWithoutSearchWrite(product, 8);
         orders.delete(initial.id());
-        checkAndCompleteOutbox(product, 10);
+        checkStockWithoutSearchWrite(product, 10);
         orders.delete(initial.id());
         assertThat(orders.create(request).status()).isEqualTo(OrderStatus.CANCELLED);
         assertThat(outbox.claim(10)).isEmpty();
@@ -119,7 +121,7 @@ class OrderStockOutboxIntegrationTest {
         long product = 1102L;
         insertProductWithTenUnits(product);
         long order = orders.create(new CreateOrderRequest(1L, product, 3, "cancel-race")).id();
-        checkAndCompleteOutbox(product, 7);
+        checkStockWithoutSearchWrite(product, 7);
         try (var callers = Executors.newFixedThreadPool(3)) {
             var futures = transaction.execute(status -> {
                 jdbc.queryForObject("SELECT id FROM orders WHERE id = ? FOR UPDATE", Long.class, order);
@@ -141,7 +143,7 @@ class OrderStockOutboxIntegrationTest {
             for (var call : futures) call.get(10, TimeUnit.SECONDS);
         }
         assertThat(orders.get(order).status()).isEqualTo(OrderStatus.CANCELLED);
-        checkAndCompleteOutbox(product, 10);
+        checkStockWithoutSearchWrite(product, 10);
     }
 
     @Test
@@ -150,7 +152,7 @@ class OrderStockOutboxIntegrationTest {
         insertProductWithTenUnits(product);
         long version = products.get(product).version();
         var order = orders.create(new CreateOrderRequest(1L, product, 10, "admin-race"));
-        checkAndCompleteOutbox(product, 0);
+        checkAndCompleteOutbox(product, false);
         var soldOut = products.get(product);
         assertThat(soldOut.status()).isEqualTo("OUT_OF_STOCK");
         var stale = new UpdateProductRequest("Replaced", BigDecimal.TEN, 10, "old stock", soldOut.category(),
@@ -161,7 +163,8 @@ class OrderStockOutboxIntegrationTest {
                 "ACME", "BLACK", "UNISEX", "DISCONTINUED", 0, soldOut.version());
         products.update(product, discontinue);
         orders.delete(order.id());
-        checkAndCompleteOutbox(product, 10);
+        checkAndCompleteOutbox(product, false);
+        assertThat(products.get(product).stockQuantity()).isEqualTo(10);
         assertThat(products.get(product).status()).isEqualTo("DISCONTINUED");
         assertThatThrownBy(() -> orders.create(new CreateOrderRequest(1L, product, 1, "discontinued")))
                 .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.PRODUCT_NOT_FOR_SALE));
@@ -189,43 +192,45 @@ class OrderStockOutboxIntegrationTest {
             assertThatThrownBy(() -> admin.get(10, TimeUnit.SECONDS)).hasCauseInstanceOf(OptimisticLockingFailureException.class);
         }
         assertThat(products.get(product).name()).isEqualTo("Test SKU");
-        checkAndCompleteOutbox(product, 7);
+        checkStockWithoutSearchWrite(product, 7);
     }
 
-    private void checkAndCompleteOutbox(long productId, int units) {
+    private void checkStockWithoutSearchWrite(long productId, int units) {
+        assertThat(jdbc.queryForObject("SELECT stock_quantity FROM products WHERE id = ?", Integer.class, productId))
+                .isEqualTo(units);
+        assertThat(outbox.claim(10)).isEmpty();
+    }
+
+    private void checkAndCompleteOutbox(long productId, boolean available) {
         var entries = outbox.claim(10);
         assertThat(entries).singleElement().satisfies(entry -> {
             assertThat(entry.productId()).isEqualTo(productId);
-            assertThat(entry.document().getStockQuantity()).isEqualTo(units);
+            assertThat(entry.document().getAvailable()).isEqualTo(available);
         });
         outbox.complete(entries);
     }
 
     @Test
-    void ordersPublishCommittedStockAndAnIdempotentReplayDoesNotRequeueIt() {
+    void ordinaryOrdersSkipSearchWritesAndAvailabilityTransitionsArePublished() {
         long productId = 1001L;
         insertProductWithTenUnits(productId);
         var request = new CreateOrderRequest(1L, productId, 2, "first-order");
 
         var first = orders.create(request);
-        var initial = outbox.claim(10);
-        assertThat(initial).singleElement().satisfies(entry -> {
-            assertThat(entry.productId()).isEqualTo(productId);
-            assertThat(entry.document().getStockQuantity()).isEqualTo(8);
-        });
-        outbox.complete(initial);
+        checkStockWithoutSearchWrite(productId, 8);
 
         assertThat(orders.create(request).id()).isEqualTo(first.id());
         assertThat(outbox.claim(10)).isEmpty();
 
-        orders.create(new CreateOrderRequest(1L, productId, 1, "second-order"));
-        orders.create(new CreateOrderRequest(1L, productId, 2, "third-order"));
-        var latest = outbox.claim(10);
-        assertThat(latest).singleElement().satisfies(entry -> {
-            assertThat(entry.productId()).isEqualTo(productId);
-            assertThat(entry.document().getStockQuantity()).isEqualTo(5);
-        });
-        outbox.complete(latest);
+        var soldOut = orders.create(new CreateOrderRequest(1L, productId, 8, "last-units"));
+        checkAndCompleteOutbox(productId, false);
+        assertThat(orders.create(new CreateOrderRequest(1L, productId, 8, "last-units")).id())
+                .isEqualTo(soldOut.id());
+        assertThat(outbox.claim(10)).isEmpty();
+        orders.delete(first.id());
+        checkAndCompleteOutbox(productId, true);
+        orders.delete(first.id());
+        checkStockWithoutSearchWrite(productId, 2);
     }
 
     // With ample stock the losing requests reach the UNIQUE index on INSERT.
@@ -263,10 +268,16 @@ class OrderStockOutboxIntegrationTest {
                 assertAll(
                         () -> assertThat(orderIds).hasSize(1),
                         () -> assertThat(stock).isEqualTo(initialStock - request.quantity()),
-                        () -> assertThat(pending).singleElement().satisfies(entry -> {
-                            assertThat(entry.productId()).isEqualTo(productId);
-                            assertThat(entry.document().getStockQuantity()).isEqualTo(initialStock - request.quantity());
-                        }),
+                        () -> {
+                            if (initialStock == request.quantity()) {
+                                assertThat(pending).singleElement().satisfies(entry -> {
+                                    assertThat(entry.productId()).isEqualTo(productId);
+                                    assertThat(entry.document().getAvailable()).isFalse();
+                                });
+                            } else {
+                                assertThat(pending).isEmpty();
+                            }
+                        },
                         () -> assertThat(outcomes)
                                 .as("orders=%s, stock=%s, pending products=%s", orderIds, stock, pending.size())
                                 .hasSize(callerCount)
@@ -317,7 +328,7 @@ class OrderStockOutboxIntegrationTest {
         long productId = 1002L;
         insertProductWithTenUnits(productId);
 
-        assertThatThrownBy(() -> orders.create(new CreateOrderRequest(1L, productId, 2, "failed-order")))
+        assertThatThrownBy(() -> orders.create(new CreateOrderRequest(1L, productId, 10, "failed-order")))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
         assertThat(jdbc.queryForObject("SELECT stock_quantity FROM products WHERE id = ?", Integer.class, productId))

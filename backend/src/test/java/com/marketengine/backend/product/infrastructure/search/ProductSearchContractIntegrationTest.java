@@ -3,6 +3,7 @@ package com.marketengine.backend.product.infrastructure.search;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import org.junit.jupiter.api.BeforeEach;
@@ -60,12 +61,13 @@ class ProductSearchContractIntegrationTest {
     @Autowired JpaProductListSearcher pgSearch;
     @Autowired ElasticsearchOperations operations;
     @Autowired ElasticsearchClient client;
+    @Autowired ProductIndexManager indexManager;
     private ElasticsearchProductListSearcher esSearch;
 
     @BeforeEach
     void reset() {
         jdbc.execute("TRUNCATE products, product_search_outbox CASCADE");
-        esSearch = new ElasticsearchProductListSearcher(operations);
+        esSearch = new ElasticsearchProductListSearcher(operations, jdbc);
         var index = operations.indexOps(ProductDocument.class);
         if (index.exists()) index.delete();
     }
@@ -73,6 +75,8 @@ class ProductSearchContractIntegrationTest {
     @Test
     void bothStoresCoverEveryPageBoundaryAndStableTieBreaker() {
         reindexer.reindex(true);
+        assertThat(operations.indexOps(ProductDocument.class).getSettings(false).flatten()
+                .get("index.sort.field").toString()).contains("createdAt", "id");
         assertThat(esSearch.search(query(null, null, "LATEST", 0))).isEmpty();
         for (int count : List.of(12, 13, 25)) {
             jdbc.update("""
@@ -119,11 +123,60 @@ class ProductSearchContractIntegrationTest {
                 (1,'123',123.4567,9),(2,'Shirt',10,1)
                 """);
         client.indices().create(c -> c.index(ProductDocument.INDEX_NAME)
+                .settings(s -> s.refreshInterval(t -> t.time("5s")))
                 .mappings(m -> m.properties("name", p -> p.integer(i -> i))));
         assertThatThrownBy(() -> reindexer.reindex(false)).isInstanceOf(IllegalStateException.class);
+        assertThat(refreshInterval()).isEqualTo("5s");
         assertThat(client.exists(r -> r.index(ProductDocument.INDEX_NAME).id("1")).value()).isTrue();
         assertThat(reindexer.reindex(true).indexedCount()).isEqualTo(2);
         assertThat(esSearch.search(query(null, null, "LATEST", 0))).hasSize(2);
+    }
+
+    @Test
+    void restoresInheritedRefreshSettingAfterFailure() throws Exception {
+        client.indices().create(c -> c.index(ProductDocument.INDEX_NAME));
+        assertThat(refreshInterval()).isNull();
+        assertThatThrownBy(() -> {
+            try (var refresh = indexManager.suspendRefresh()) {
+                assertThat(refreshInterval()).isEqualTo("-1");
+                throw new IllegalStateException("interrupted bulk");
+            }
+        }).isInstanceOf(IllegalStateException.class).hasMessage("interrupted bulk");
+        assertThat(refreshInterval()).isNull();
+    }
+
+    @Test
+    void firstReindexCreatesAMappedIndexWithoutRecreateFlag() {
+        assertThat(reindexer.reindex(false).indexedCount()).isZero();
+        assertThat(operations.indexOps(ProductDocument.class).getMapping()).containsKey("properties");
+        assertThat(refreshInterval()).isNotEqualTo("-1");
+    }
+
+    @Test
+    void oldDocumentsReadCurrentAvailabilityInOneBatchUntilReindexed() throws Exception {
+        jdbc.update("""
+                INSERT INTO products(id,name,price_amount,stock_quantity,status) VALUES
+                (1,'Legacy One',10,9,'INACTIVE'),(2,'Legacy Two',10,0,'OUT_OF_STOCK'),
+                (3,'Legacy Three',10,3,'ACTIVE')
+                """);
+        indexManager.create();
+        for (long id : List.of(1L, 2L, 3L)) {
+            long productId = id;
+            client.index(request -> request.index(ProductDocument.INDEX_NAME).id(Long.toString(productId))
+                    .document(Map.of("id", productId, "name", "Legacy", "priceAmount", 10,
+                            "stockQuantity", 99, "category", "TOP", "popularityScore", 0,
+                            "createdAt", "2026-01-01T00:00:00.000Z")));
+        }
+        operations.indexOps(ProductDocument.class).refresh();
+        var results = esSearch.search(query(null, null, "LATEST", 0)).getContent();
+        assertThat(results).extracting(ProductSummaryResponse::id).containsExactly(3L, 2L, 1L);
+        assertThat(results).extracting(ProductSummaryResponse::available).containsExactly(true, false, false);
+    }
+
+    private String refreshInterval() {
+        Object value = operations.indexOps(ProductDocument.class).getSettings(false).flatten()
+                .get("index.refresh_interval");
+        return value == null ? null : value.toString();
     }
 
     private ProductListQuery query(String keyword, String brand, String sort, int page) {

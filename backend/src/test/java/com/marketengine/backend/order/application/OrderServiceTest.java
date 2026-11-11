@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -32,6 +33,7 @@ import com.marketengine.backend.order.domain.OrderStatus;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductCategory;
 import com.marketengine.backend.product.infrastructure.ProductInventory;
+import com.marketengine.backend.product.infrastructure.ProductInventory.Reservation;
 import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -49,6 +51,9 @@ class OrderServiceTest {
 
     @Mock
     private ProductSearchOutbox outbox;
+
+    @Mock
+    private OrderTransactionLimits transactionLimits;
 
     @InjectMocks
     private OrderService orderService;
@@ -126,6 +131,7 @@ class OrderServiceTest {
         Order order = new Order(member, product, 1, new BigDecimal("30.00"), OrderStatus.CREATED, "key-1");
         ReflectionTestUtils.setField(product, "id", 2L);
         when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
+        when(inventory.reserve(2L, 1)).thenReturn(new Reservation(BigDecimal.valueOf(30), false));
 
         OrderResponse response = orderService.update(10L, new UpdateOrderRequest(OrderStatus.CONFIRMED, 2));
 
@@ -133,6 +139,6 @@ class OrderServiceTest {
         assertThat(response.quantity()).isEqualTo(2);
         assertThat(response.totalAmount()).isEqualByComparingTo("60.00");
         verify(inventory).reserve(2L, 1);
-        verify(outbox).enqueue(2L);
+        verifyNoInteractions(outbox);
     }
 }

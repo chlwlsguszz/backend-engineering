@@ -24,12 +24,14 @@ import com.marketengine.backend.member.domain.MemberRepository;
 import com.marketengine.backend.order.api.OrderDtos.CreateOrderRequest;
 import com.marketengine.backend.order.api.OrderDtos.OrderResponse;
 import com.marketengine.backend.order.domain.Order;
+import com.marketengine.backend.order.domain.OrderReplay;
 import com.marketengine.backend.order.domain.OrderRepository;
 import com.marketengine.backend.order.domain.OrderStatus;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductCategory;
 import com.marketengine.backend.product.domain.ProductRepository;
 import com.marketengine.backend.product.infrastructure.ProductInventory;
+import com.marketengine.backend.product.infrastructure.ProductInventory.Reservation;
 import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
 
 @ExtendWith(MockitoExtension.class)
@@ -52,6 +54,9 @@ class OrderCreateExecutorTest {
     @Mock
     private ProductSearchOutbox productSearchOutbox;
 
+    @Mock
+    private OrderTransactionLimits transactionLimits;
+
     @InjectMocks
     private OrderCreateExecutor orderCreateExecutor;
 
@@ -60,7 +65,7 @@ class OrderCreateExecutorTest {
         Product product = productWithFiveUnits();
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
 
-        when(inventory.reserve(2L, 3)).thenReturn(new BigDecimal("30.00"));
+        when(inventory.reserve(2L, 3)).thenReturn(new Reservation(new BigDecimal("30.00"), false));
         when(productRepository.getReferenceById(2L)).thenReturn(product);
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -73,6 +78,18 @@ class OrderCreateExecutorTest {
         assertThat(response.status()).isEqualTo(OrderStatus.CREATED);
         assertThat(response.idempotencyKey()).isEqualTo("key-1");
         verify(inventory).reserve(2L, 3);
+        verifyNoInteractions(productSearchOutbox);
+    }
+
+    @Test
+    void execute_publishesWhenTheLastUnitChangesAvailability() {
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(inventory.reserve(2L, 5)).thenReturn(new Reservation(new BigDecimal("30.00"), true));
+        when(productRepository.getReferenceById(2L)).thenReturn(productWithFiveUnits());
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        orderCreateExecutor.execute(new CreateOrderRequest(1L, 2L, 5, "last-unit"));
+
         verify(productSearchOutbox).enqueue(2L);
     }
 
@@ -96,7 +113,7 @@ class OrderCreateExecutorTest {
         ReflectionTestUtils.setField(product, "id", 1001L);
         var existing = new Order(member, product, 3, product.getPriceAmount(), OrderStatus.CREATED, "key-1");
         var request = new CreateOrderRequest(1L, 1001L, 3, "key-1");
-        when(orderRepository.findByMemberIdAndIdempotencyKey(1L, "key-1")).thenReturn(Optional.of(existing));
+        when(orderRepository.findByMemberIdAndIdempotencyKey(1L, "key-1")).thenReturn(Optional.of(replay(existing)));
 
         OrderResponse response = orderCreateExecutor.execute(request);
 
@@ -112,7 +129,7 @@ class OrderCreateExecutorTest {
         ReflectionTestUtils.setField(product, "id", 1001L);
         var existing = new Order(member, product, 1, product.getPriceAmount(), OrderStatus.CREATED, "key-1");
         var request = new CreateOrderRequest(1L, 1001L, 2, "key-1");
-        when(orderRepository.findByMemberIdAndIdempotencyKey(1L, "key-1")).thenReturn(Optional.of(existing));
+        when(orderRepository.findByMemberIdAndIdempotencyKey(1L, "key-1")).thenReturn(Optional.of(replay(existing)));
 
         assertThatThrownBy(() -> orderCreateExecutor.execute(request))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -134,5 +151,11 @@ class OrderCreateExecutorTest {
     private Product productWithFiveUnits() {
         return new Product("book", new BigDecimal("30.00"), 5, "book detail", ProductCategory.TOP,
                 "CORE", "BLACK", "UNISEX", "ACTIVE", 100);
+    }
+
+    private OrderReplay replay(Order order) {
+        return new OrderReplay(order.getId(), order.getMember().getId(), order.getProduct().getId(),
+                order.getRequestedQuantity(), order.getQuantity(), order.getUnitPrice(), order.getStatus(),
+                order.getTotalAmount(), order.getIdempotencyKey(), order.getCreatedAt());
     }
 }

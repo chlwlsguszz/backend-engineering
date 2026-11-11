@@ -6,7 +6,7 @@ export type Product = {
   id: number;
   name: string;
   priceAmount: number;
-  stockQuantity: number;
+  available: boolean;
   category: ProductCategory;
   brand: string;
   color: string;
@@ -15,7 +15,8 @@ export type Product = {
   createdAt: string;
 };
 
-export type ProductDetail = Product & {
+export type ProductDetail = Omit<Product, "available"> & {
+  stockQuantity: number;
   description: string;
   status: string;
   updatedAt: string;

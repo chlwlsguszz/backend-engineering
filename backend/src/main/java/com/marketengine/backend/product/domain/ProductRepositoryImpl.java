@@ -9,11 +9,13 @@ import org.springframework.data.domain.SliceImpl;
 
 import com.querydsl.core.types.Order;
 import com.querydsl.core.types.OrderSpecifier;
+import com.querydsl.core.types.Projections;
 import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.core.types.dsl.Expressions;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 
 import jakarta.persistence.EntityManager;
+import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
 
 public class ProductRepositoryImpl implements ProductQueryRepository {
 
@@ -24,12 +26,17 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
     }
 
     @Override
-    public Slice<Product> search(ProductListQuery query) {
+    public Slice<ProductSummaryResponse> search(ProductListQuery query) {
         QProduct product = QProduct.product;
         Pageable pageable = query.pageable();
 
-        List<Product> rows = queryFactory
-                .selectFrom(product)
+        List<ProductSummaryResponse> rows = queryFactory
+                .select(Projections.constructor(ProductSummaryResponse.class,
+                        product.id, product.name, product.priceAmount,
+                        product.status.eq("ACTIVE").and(product.stockQuantity.gt(0)),
+                        product.category, product.brand, product.color, product.gender,
+                        product.popularityScore, product.createdAt))
+                .from(product)
                 .where(
                         keywordContains(query.keyword()),
                         query.category() == null ? null : product.category.eq(query.category()),
