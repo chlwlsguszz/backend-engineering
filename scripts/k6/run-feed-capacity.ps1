@@ -29,7 +29,9 @@ param(
     [ValidateRange(-1, 600)]
     [int] $HoldSeconds = -1,
     [ValidatePattern('^[a-z0-9][a-z0-9_-]*$')]
-    [string] $ComposeProject = 'marketengine-catalog-10m'
+    [string] $ComposeProject = 'marketengine-catalog-10m',
+    [ValidatePattern('^https?://')]
+    [string] $ElasticsearchUrl = 'http://localhost:9200'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,7 +50,7 @@ if ($Sweep) {
 }
 $docker = Get-Command docker.exe -CommandType Application | Select-Object -First 1 -ExpandProperty Path
 $visibleProducts = '{"query":{"bool":{"must_not":[{"term":{"outboxDeleted":true}}]}}}'
-$index = Invoke-RestMethod -Uri 'http://localhost:9200/products/_count' -Method Post -ContentType 'application/json' -Body $visibleProducts -TimeoutSec 15
+$index = Invoke-RestMethod -Uri ($ElasticsearchUrl.TrimEnd('/') + '/products/_count') -Method Post -ContentType 'application/json' -Body $visibleProducts -TimeoutSec 15
 $health = Invoke-RestMethod -Uri 'http://localhost:8080/actuator/health' -TimeoutSec 15
 if ($index.count -ne 10000000 -or $health.status -ne 'UP') {
     throw "Expected 10000000 searchable products and a healthy backend. Found count=$($index.count), health=$($health.status)."
@@ -113,6 +115,7 @@ if ($Sweep) {
         Commit = (& git -C $repoRoot rev-parse HEAD)
         Dirty = ([bool](& git -C $repoRoot status --porcelain))
         K6Image = 'grafana/k6:0.58.0'; ComposeProject = $ComposeProject
+        ElasticsearchUrl = $ElasticsearchUrl.TrimEnd('/')
     }
     $settings | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $results 'settings.json') -Encoding UTF8
     $endpoints = $rampStages | ForEach-Object { "$($_.TargetRps) RPS at $($_.EndMs / 1000)s" }
