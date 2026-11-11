@@ -123,3 +123,13 @@ PostgreSQL 16 회귀 테스트에서 재고 10개에 같은 키로 주문 10건�
 병렬 쓰기에서는 나중에 읽은 배치가 먼저 끝날 수 있다. 마지막으로 읽은 상품 ID를 저장 완료 지점으로 간주하면 앞선 배치의 실패를 놓친다.
 
 조회 커서는 DB에서 읽은 ID로 전진시키고, 완료 건수는 ES 쓰기가 성공한 배치만 합산한다. 모든 쓰기가 끝난 후 최종 refresh를 수행하고 원본 건수, 성공 건수, ES 문서 수를 대조한다. 인덱스를 재생성한 실행에서는 건수가 다르면 실패한다. 일부 배치가 이미 저장된 상태에서 실패할 수 있으므로, 이 절차는 원본을 고정한 오프라인 재색인을 전제로 한다. 단계별 시간도 기록하며, 병렬 워커의 누적 쓰기 시간은 전체 경과 시간과 구분한다. [완료 조건과 계측 코드](../backend/src/main/java/com/marketengine/backend/product/infrastructure/search/ProductBulkReindexer.java)
+
+## 2026-11-11 후속 성능 개선
+
+### 1. 서비스 메모리 예산과 DB 유지관리
+
+Compose 기본 ES 힙을 512MB에서 2GB로 조정했다. 캐시 전용 Redis는 512MB 상한과 `allkeys-lfu`를 사용하고 영속 저장을 끈다. 두 값은 환경 변수로 변경할 수 있으며 전체 Docker 메모리에는 ES 파일 캐시와 다른 서비스 여유도 남겨야 한다.
+
+PostgreSQL에 `pg_stat_statements`를 활성화하고 V12에서 products와 Outbox의 테이블별 autovacuum 기준을 낮췄다. products의 fillfactor 90은 앞으로 할당되는 페이지에 적용되며 기존 1,000만 행을 재작성하지 않는다. HOT 비율과 WAL을 관찰할 수 있도록 기준을 마련한 변경이며 처리량 증가 수치는 아직 측정하지 않았다.
+
+검수: 격리된 PostgreSQL 16에 상품 100개를 생성하고 B9부터 V12까지 적용했다. 상품 수 보존, 테이블 옵션, `pg_stat_statements` 조회를 확인했다. Compose 설정 해석에서 ES 2GB와 Redis LFU 512MB도 확인했다. 기존 데이터 볼륨은 변경하지 않았다.

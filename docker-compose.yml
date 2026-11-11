@@ -3,7 +3,7 @@ name: marketengine-catalog
 services:
   postgres:
     image: postgres:16-alpine
-    command: ["postgres", "-c", "max_connections=200"]
+    command: ["postgres", "-c", "max_connections=200", "-c", "shared_preload_libraries=pg_stat_statements"]
     environment:
       POSTGRES_DB: marketengine
       POSTGRES_USER: marketengine
@@ -23,7 +23,7 @@ services:
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
-      ES_JAVA_OPTS: "-Xms${ES_HEAP_SIZE:-512m} -Xmx${ES_HEAP_SIZE:-512m}"
+      ES_JAVA_OPTS: "-Xms${ES_HEAP_SIZE:-2g} -Xmx${ES_HEAP_SIZE:-2g}"
     ports:
       - "127.0.0.1:9200:9200"
     healthcheck:
@@ -36,6 +36,8 @@ services:
 
   redis:
     image: redis:7-alpine
+    # This instance only holds disposable search results. Reserve memory for Redis overhead too.
+    command: ["redis-server", "--maxmemory", "${REDIS_MAXMEMORY:-512mb}", "--maxmemory-policy", "allkeys-lfu", "--save", "", "--appendonly", "no"]
     ports:
       - "127.0.0.1:16379:6379"
     healthcheck:
