@@ -29,31 +29,44 @@ public class ProductOutboxWorker {
     private final ProductOutboxPublisher publisher;
     private final ApplicationAvailability availability;
     private final int batchSize;
+    private final int maxBatchesPerPoll;
     private final Counter published;
     private final Counter failed;
 
     public ProductOutboxWorker(ProductSearchOutbox outbox, ProductOutboxPublisher publisher,
                                ApplicationAvailability availability, MeterRegistry registry,
-                               @Value("${marketengine.elasticsearch.outbox.batch-size:500}") int batchSize) {
+                               @Value("${marketengine.elasticsearch.outbox.batch-size:500}") int batchSize,
+                               @Value("${marketengine.elasticsearch.outbox.max-batches-per-poll:8}") int maxBatchesPerPoll) {
         Assert.isTrue(batchSize > 0, "Outbox batch size must be positive");
+        Assert.isTrue(maxBatchesPerPoll > 0, "Outbox maximum batches per poll must be positive");
         this.outbox = outbox;
         this.publisher = publisher;
         this.availability = availability;
         this.batchSize = batchSize;
+        this.maxBatchesPerPoll = maxBatchesPerPoll;
         this.published = registry.counter("product.outbox.publications", "outcome", "success");
         this.failed = registry.counter("product.outbox.publications", "outcome", "failure");
     }
 
     @Scheduled(fixedDelayString = "${marketengine.elasticsearch.outbox.poll-delay:250ms}")
     public void publishPending() {
-        if (availability.getReadinessState() != ReadinessState.ACCEPTING_TRAFFIC) {
-            return;
+        // Drain full batches immediately, but yield periodically and stop promptly during shutdown.
+        for (int batch = 0; batch < maxBatchesPerPoll; batch++) {
+            if (Thread.currentThread().isInterrupted()
+                    || availability.getReadinessState() != ReadinessState.ACCEPTING_TRAFFIC) {
+                return;
+            }
+            List<Entry> claimed = outbox.claim(batchSize);
+            if (claimed.isEmpty()) {
+                return;
+            }
+            if (!publishBatch(claimed) || claimed.size() < batchSize) {
+                return;
+            }
         }
-        List<Entry> claimed = outbox.claim(batchSize);
-        if (claimed.isEmpty()) {
-            return;
-        }
+    }
 
+    private boolean publishBatch(List<Entry> claimed) {
         List<Entry> completed;
         try {
             completed = publisher.publish(claimed);
@@ -61,7 +74,7 @@ public class ProductOutboxWorker {
             failed.increment(claimed.size());
             log.warn("Product outbox bulk request failed for {} products", claimed.size(), failure);
             outbox.retry(claimed);
-            return;
+            return false;
         }
 
         if (!completed.isEmpty()) {
@@ -72,6 +85,8 @@ public class ProductOutboxWorker {
             failed.increment(claimed.size() - completed.size());
             var successes = new HashSet<>(completed);
             outbox.retry(claimed.stream().filter(entry -> !successes.contains(entry)).toList());
+            return false;
         }
+        return true;
     }
 }
