@@ -6,6 +6,7 @@ import com.marketengine.backend.member.domain.Member;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 public final class MemberDtos {
 
@@ -13,15 +14,13 @@ public final class MemberDtos {
     }
 
     public record CreateMemberRequest(
-            @NotBlank @Email String email,
-            String passwordHash,
-            @NotBlank String name
+            @NotBlank @Email @Size(max = 255) String email,
+            @NotBlank @Size(max = 100) String name
     ) {
     }
 
     public record UpdateMemberRequest(
-            @NotBlank String name,
-            String passwordHash
+            @NotBlank @Size(max = 100) String name
     ) {
     }
 

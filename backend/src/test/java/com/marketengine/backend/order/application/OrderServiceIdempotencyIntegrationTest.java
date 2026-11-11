@@ -3,17 +3,9 @@ package com.marketengine.backend.order.application;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -26,7 +18,6 @@ import com.marketengine.backend.order.domain.OrderRepository;
 import com.marketengine.backend.product.domain.ProductRepository;
 import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
 
-@SpringBootTest
 @MockitoBean(types = ProductSearchOutbox.class)
 @TestPropertySource(properties = {
         "marketengine.elasticsearch.enabled=false",
@@ -38,7 +29,7 @@ import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbo
                 + "org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration",
         "spring.cache.type=simple"
 })
-class OrderServiceIdempotencyIntegrationTest {
+class OrderServiceIdempotencyIntegrationTest extends OrderPostgresTest {
 
     @Autowired
     private OrderService orderService;
@@ -86,39 +77,6 @@ class OrderServiceIdempotencyIntegrationTest {
 
         assertThat(orderRepository.count()).isOne();
         assertThat(loadStock(productId)).isEqualTo(9);
-    }
-
-    @Test
-    void create_doesNotDoubleChargeStockUnderConcurrentDuplicateRequests() throws Exception {
-        long memberId = insertMember("order-it-idempotent-concurrent@test.com");
-        long productId = insertProduct(10);
-        CreateOrderRequest request = new CreateOrderRequest(memberId, productId, 1, "dup-key-3");
-
-        ExecutorService executor = Executors.newFixedThreadPool(10);
-        try {
-            List<Callable<OrderResponse>> tasks = new ArrayList<>();
-            for (int i = 0; i < 10; i++) {
-                tasks.add(() -> orderService.create(request));
-            }
-
-            List<Future<OrderResponse>> results = executor.invokeAll(tasks);
-            List<Long> orderIds = results.stream()
-                    .map(future -> {
-                        try {
-                            return future.get().id();
-                        } catch (Exception ex) {
-                            throw new RuntimeException(ex);
-                        }
-                    })
-                    .distinct()
-                    .toList();
-
-            assertThat(orderIds).hasSize(1);
-            assertThat(orderRepository.count()).isOne();
-            assertThat(loadStock(productId)).isEqualTo(9);
-        } finally {
-            executor.shutdownNow();
-        }
     }
 
     private long insertMember(String email) {

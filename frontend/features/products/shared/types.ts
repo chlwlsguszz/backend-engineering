@@ -6,7 +6,7 @@ export type Product = {
   id: number;
   name: string;
   priceAmount: number;
-  stockQuantity: number;
+  available: boolean;
   category: ProductCategory;
   brand: string;
   color: string;
@@ -15,26 +15,23 @@ export type Product = {
   createdAt: string;
 };
 
-export type ProductDetail = Product & {
+export type ProductDetail = Omit<Product, "available"> & {
+  stockQuantity: number;
   description: string;
   status: string;
   updatedAt: string;
 };
 
-export type ApiEnvelope<T> = {
-  success: boolean;
-  data: T;
-  error?: {
-    code: string;
-    message: string;
-  };
-};
+export type ApiEnvelope<T> =
+  | { success: true; data: T }
+  | { success: false; error: { code: string; message: string } };
 
 export type ProductPageResponse = {
   items: Product[];
   page: number;
   size: number;
   hasNext: boolean;
+  nextCursor: string | null;
 };
 
 export type ProductFilterState = {
@@ -56,5 +53,6 @@ export type OrderResponse = {
   unitPrice: number;
   status: string;
   totalAmount: number;
+  idempotencyKey: string;
   createdAt: string;
 };

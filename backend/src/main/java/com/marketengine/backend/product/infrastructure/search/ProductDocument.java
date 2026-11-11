@@ -2,6 +2,7 @@ package com.marketengine.backend.product.infrastructure.search;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.Objects;
 
 import org.springframework.data.annotation.Id;
 import org.springframework.data.elasticsearch.annotations.Document;
@@ -19,13 +20,14 @@ import lombok.NoArgsConstructor;
  */
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-@Document(indexName = ProductDocument.INDEX_NAME)
+@Document(indexName = ProductDocument.INDEX_NAME, createIndex = false)
 @Setting(replicas = 0)
 public class ProductDocument {
 
     public static final String INDEX_NAME = "products";
 
     @Id
+    @Field(type = FieldType.Long)
     private Long id;
 
     @Field(type = FieldType.Text)
@@ -34,8 +36,9 @@ public class ProductDocument {
     @Field(type = FieldType.Double)
     private BigDecimal priceAmount;
 
-    @Field(type = FieldType.Integer)
-    private int stockQuantity;
+    // Nullable while reading an index created before availability replaced exact inventory.
+    @Field(type = FieldType.Boolean)
+    private Boolean available;
 
     @Field(type = FieldType.Keyword)
     private String category;
@@ -59,7 +62,7 @@ public class ProductDocument {
             Long id,
             String name,
             BigDecimal priceAmount,
-            int stockQuantity,
+            Boolean available,
             String category,
             String brand,
             String color,
@@ -70,7 +73,7 @@ public class ProductDocument {
         this.id = id;
         this.name = name;
         this.priceAmount = priceAmount;
-        this.stockQuantity = stockQuantity;
+        this.available = available;
         this.category = category;
         this.brand = brand;
         this.color = color;
@@ -82,5 +85,14 @@ public class ProductDocument {
     static BoolQuery.Builder visibleProducts() {
         // Existing catalog documents have no outbox metadata and must remain visible.
         return new BoolQuery.Builder().mustNot(q -> q.term(t -> t.field("outboxDeleted").value(true)));
+    }
+
+    boolean matchesProjection(ProductDocument other) {
+        return id.equals(other.id) && Objects.equals(name, other.name)
+                && other.priceAmount != null && priceAmount.compareTo(other.priceAmount) == 0
+                && Objects.equals(available, other.available) && popularityScore == other.popularityScore
+                && Objects.equals(category, other.category) && Objects.equals(brand, other.brand)
+                && Objects.equals(color, other.color) && Objects.equals(gender, other.gender)
+                && other.createdAt != null && createdAt.toInstant().toEpochMilli() == other.createdAt.toInstant().toEpochMilli();
     }
 }

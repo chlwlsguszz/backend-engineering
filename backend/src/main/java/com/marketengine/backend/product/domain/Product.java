@@ -10,7 +10,10 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 import com.marketengine.backend.common.exception.BusinessException;
 import com.marketengine.backend.common.exception.ErrorCode;
@@ -60,11 +63,29 @@ public class Product {
     @Column(name = "popularity_score", nullable = false)
     private int popularityScore;
 
-    @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
+    @Version
+    @Column(nullable = false, columnDefinition = "bigint default 0")
+    private long version;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
-    @Column(name = "updated_at", nullable = false, insertable = false, updatable = false)
+    @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    @PrePersist
+    void created() {
+        createdAt = OffsetDateTime.now();
+        updatedAt = createdAt;
+    }
+
+    @PreUpdate
+    void updated() {
+        OffsetDateTime now = OffsetDateTime.now();
+        if (now.isAfter(updatedAt)) {
+            updatedAt = now;
+        }
+    }
 
     public Product(
             String name,
@@ -86,18 +107,18 @@ public class Product {
         this.brand = brand;
         this.color = color;
         this.gender = gender;
-        this.status = status;
+        this.status = saleStatus(status, stockQuantity);
         this.popularityScore = popularityScore;
     }
 
-    public void decreaseStock(int quantity) {
-        if (quantity <= 0) {
-            throw new IllegalArgumentException("quantity must be positive");
+    private static String saleStatus(String status, int stockQuantity) {
+        if ("DISCONTINUED".equals(status)) {
+            return status;
         }
-        if (stockQuantity < quantity) {
-            throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK, "Insufficient stock");
+        if (!"ACTIVE".equals(status) && !"OUT_OF_STOCK".equals(status)) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST, "Unknown product sale status");
         }
-        stockQuantity -= quantity;
+        return stockQuantity == 0 ? "OUT_OF_STOCK" : "ACTIVE";
     }
 
     public void changeInfo(
@@ -120,7 +141,7 @@ public class Product {
         this.brand = brand;
         this.color = color;
         this.gender = gender;
-        this.status = status;
+        this.status = saleStatus(status, stockQuantity);
         this.popularityScore = popularityScore;
     }
 }

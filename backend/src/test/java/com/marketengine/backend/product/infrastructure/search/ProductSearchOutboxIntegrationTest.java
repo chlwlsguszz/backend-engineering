@@ -63,7 +63,8 @@ class ProductSearchOutboxIntegrationTest {
         new JdbcTemplate(dataSource).execute("""
                 CREATE TABLE products (
                     id bigint PRIMARY KEY, name text NOT NULL, price_amount numeric NOT NULL DEFAULT 12,
-                    stock_quantity int NOT NULL DEFAULT 3, category text DEFAULT 'TOP', brand text DEFAULT 'Acme',
+                    stock_quantity int NOT NULL DEFAULT 3, status text NOT NULL DEFAULT 'ACTIVE',
+                    category text DEFAULT 'TOP', brand text DEFAULT 'Acme',
                     color text DEFAULT 'BLACK', gender text DEFAULT 'UNISEX', popularity_score int DEFAULT 0,
                     created_at timestamptz NOT NULL DEFAULT now()
                 )

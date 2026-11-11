@@ -2,41 +2,50 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { createOrder, fetchProductDetail } from "@/features/products/shared/api";
 import type { ProductDetail } from "@/features/products/shared/types";
+import { CATEGORY_LABEL } from "@/features/products/shared/constants";
 
-type ProductCategory = ProductDetail["category"];
+const DEMO_MEMBER_ID = 1;
+
+type OrderIntent = { quantity: number; idempotencyKey: string };
+
+function readIntent(storageKey: string): OrderIntent | null {
+  try {
+    const stored = sessionStorage.getItem(storageKey);
+    if (!stored) return null;
+    const value = JSON.parse(stored);
+    if (!Number.isSafeInteger(value?.quantity) || value.quantity < 1 ||
+        typeof value.idempotencyKey !== "string" || value.idempotencyKey.length !== 36) return null;
+    return { quantity: value.quantity, idempotencyKey: value.idempotencyKey };
+  } catch {
+    return null;
+  }
+}
 
 export default function ProductDetailPage() {
-  const params = useParams<{ id: string }>();
-  const productId = params.id;
+  const { id } = useParams<{ id: string }>();
+  return <ProductDetailView key={id} productId={id} />;
+}
 
+function ProductDetailView({ productId }: { productId: string }) {
+  const storageKey = `marketengine:order-intent:${DEMO_MEMBER_ID}:${productId}`;
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [orderQuantity, setOrderQuantity] = useState(1);
   const [ordering, setOrdering] = useState(false);
   const [orderMessage, setOrderMessage] = useState("");
-
-  const categoryLabel = useMemo<Record<ProductCategory, string>>(
-    () => ({
-      TOP: "상의",
-      BOTTOM: "하의",
-      OUTER: "아우터",
-      SHOES: "신발",
-      GLASSES: "안경",
-      HAT: "모자",
-    }),
-    [],
-  );
+  const [pendingIntent, setPendingIntent] = useState<OrderIntent | null>(null);
+  const submitting = useRef(false);
 
   useEffect(() => {
+    const controller = new AbortController();
     async function fetchDetail() {
-      setLoading(true);
-      setMessage("");
-      const result = await fetchProductDetail(productId);
+      const result = await fetchProductDetail(productId, controller.signal);
+      if (controller.signal.aborted) return;
       if (!result.data) {
         setMessage(result.errorMessage || "상품 상세 조회 실패");
         setProduct(null);
@@ -44,32 +53,73 @@ export default function ProductDetailPage() {
         return;
       }
       setProduct(result.data);
+      const intent = readIntent(storageKey);
+      if (intent) {
+        setPendingIntent(intent);
+        setOrderQuantity(intent.quantity);
+        setOrderMessage("처리 결과를 확인할 주문이 있습니다. 같은 주문을 다시 확인하세요.");
+      }
       setLoading(false);
     }
 
     if (productId) {
       void fetchDetail();
     }
-  }, [productId]);
+    return () => controller.abort();
+  }, [productId, storageKey]);
+
+  function finishIntent(intent: OrderIntent) {
+    if (readIntent(storageKey)?.idempotencyKey === intent.idempotencyKey) {
+      sessionStorage.removeItem(storageKey);
+    }
+    setPendingIntent(null);
+  }
+
+  async function refreshStock() {
+    const result = await fetchProductDetail(productId);
+    if (result.data) setProduct(result.data);
+    else setMessage("최신 재고를 확인하려면 페이지를 새로 고쳐 주세요.");
+  }
 
   async function orderProduct() {
-    if (!product) {
+    if (!product || submitting.current) {
       return;
     }
+    submitting.current = true;
     setOrdering(true);
+    setMessage("");
     setOrderMessage("");
     try {
+      const intent = pendingIntent ?? { quantity: orderQuantity, idempotencyKey: crypto.randomUUID() };
+      // Persist before sending: a reload after a lost response must replay the committed order.
+      sessionStorage.setItem(storageKey, JSON.stringify(intent));
+      setPendingIntent(intent);
       const result = await createOrder({
-        memberId: 1,
+        memberId: DEMO_MEMBER_ID,
         productId: product.id,
-        quantity: orderQuantity,
+        ...intent,
       });
-      if (!result.data) {
-        setOrderMessage(result.errorMessage || "주문 실패");
-      } else {
+      if (result.data) {
+        finishIntent(intent);
         setOrderMessage(`주문 완료! 주문번호: ${result.data.id}`);
+        await refreshStock();
+      } else if (result.retryable) {
+        setOrderMessage("주문 결과를 확인하지 못했습니다. 같은 주문을 다시 확인하세요.");
+      } else {
+        finishIntent(intent);
+        if (result.errorCode === "INSUFFICIENT_STOCK" || result.errorCode === "PRODUCT_NOT_FOR_SALE") {
+          setOrderMessage(result.errorCode === "INSUFFICIENT_STOCK"
+            ? "주문 가능한 재고가 부족합니다."
+            : "판매가 중단된 상품입니다.");
+          await refreshStock();
+        } else {
+          setOrderMessage(result.errorMessage);
+        }
       }
+    } catch {
+      setOrderMessage("브라우저에서 주문 키를 저장하지 못했습니다. 이 사이트의 저장소 설정을 확인하세요.");
     } finally {
+      submitting.current = false;
       setOrdering(false);
     }
   }
@@ -123,7 +173,7 @@ export default function ProductDetailPage() {
               </p>
 
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <Info label="카테고리" value={categoryLabel[product.category]} />
+                <Info label="카테고리" value={CATEGORY_LABEL[product.category]} />
                 <Info label="성별" value={product.gender} />
                 <Info label="색상" value={product.color} />
                 <Info label="상태" value={product.status} />
@@ -139,6 +189,7 @@ export default function ProductDetailPage() {
                   <input
                     id="order-quantity"
                     type="number"
+                    disabled={ordering}
                     min={1}
                     max={Math.max(1, product.stockQuantity)}
                     value={orderQuantity}
@@ -147,7 +198,8 @@ export default function ProductDetailPage() {
                       if (Number.isNaN(value)) {
                         return;
                       }
-                      const bounded = Math.min(Math.max(1, value), Math.max(1, product.stockQuantity));
+                      const bounded = Math.min(Math.max(1, Math.trunc(value)), Math.max(1, product.stockQuantity));
+                      if (bounded !== orderQuantity && pendingIntent) finishIntent(pendingIntent);
                       setOrderQuantity(bounded);
                     }}
                     className="w-24 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black"
@@ -155,10 +207,10 @@ export default function ProductDetailPage() {
                   <button
                     type="button"
                     onClick={() => void orderProduct()}
-                    disabled={ordering || product.stockQuantity <= 0}
+                    disabled={ordering || (!pendingIntent && (product.stockQuantity <= 0 || product.status !== "ACTIVE" || orderQuantity > product.stockQuantity))}
                     className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {ordering ? "주문 처리 중..." : "주문하기"}
+                    {ordering ? "주문 처리 중..." : pendingIntent ? "같은 주문 다시 확인" : "주문하기"}
                   </button>
                 </div>
                 <p className="mt-2 text-xs text-slate-500">데모용 주문은 memberId=1 기준으로 생성됩니다.</p>

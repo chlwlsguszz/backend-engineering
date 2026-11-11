@@ -40,6 +40,9 @@ jobs:
       - name: Run tests
         run: ./gradlew test --no-daemon --stacktrace
 
+      - name: Require the real database integration suites
+        run: python3 ../.github/scripts/check-container-tests.py
+
       - name: Upload test report (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
@@ -47,3 +50,39 @@ jobs:
           name: backend-test-reports
           path: backend/build/reports/tests/test/
           if-no-files-found: ignore
+
+  frontend-test:
+    name: Frontend and browser checkout
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - name: Start isolated PostgreSQL and backend
+        run: |
+          chmod +x ../backend/gradlew
+          docker compose -p browser-ci -f e2e/compose.yml up -d --build
+          origin="http://$(docker compose -p browser-ci -f e2e/compose.yml port backend 8080)"
+          curl --fail --silent --show-error --retry 30 --retry-delay 2 --retry-all-errors "$origin/actuator/health"
+          echo "BACKEND_ORIGIN=$origin" >> "$GITHUB_ENV"
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium --only-shell
+      - run: npm run test:e2e
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-results
+          path: frontend/test-results/
+          if-no-files-found: ignore
+      - name: Remove the browser test database
+        if: always()
+        run: docker compose -p browser-ci -f e2e/compose.yml down -v

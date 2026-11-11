@@ -1,6 +1,6 @@
 # 🔍 Market Backend Engine — 설계 결함, 과설계 및 성능/시나리오 개선 리포트
 
-> 이 문서의 시드 분석은 V4 당시의 구현을 대상으로 합니다. 현재 생성 규칙과 변경 결과는 [설계 개선 기록](IMPROVEMENT_LOG.md)에 정리했습니다.
+> 이 문서는 변경 전 코드의 진단과 실험 가설을 보존한 기록입니다. 현재 주문 규칙, 검색 계약, 검증 결과는 [실행 현황](PLAN.md)과 [설계 개선 기록](IMPROVEMENT_LOG.md)에서 확인할 수 있습니다.
 
 > **작성 목적**: 대용량 상품 검색(1,000만 건) 및 고동시성 주문/결제 시스템의 현재 구현 코드를 시니어 엔지니어/면접관 시각에서 정밀 진단하고, **설계적 결함(Design Flaws)**, **과설계(Over-engineering)**, **가상 데이터 및 부하 테스트(k6) 왜곡 요인**, **기술 스택 및 Elasticsearch 최적화 포인트**를 종합 정리한 문서입니다.
 
@@ -13,7 +13,7 @@
 4. [가상 데이터(Seed Data) 및 k6 부하 테스트 시나리오의 비현실성](#4-가상-데이터seed-data-및-k6-부하-테스트-시나리오의-비현실성)
 5. [기술 스택 타당성 및 보완 포인트](#5-기술-스택-타당성-및-보완-포인트)
 6. [Elasticsearch 정렬(`doc_values` vs `Index Sorting`) 심층 분석](#6-elasticsearch-정렬doc_values-vs-index-sorting-심층-분석)
-7. [우선순위별 개선 로드맵 (Action Items)](#7-우선순위별-개선-로드맵-action-items)
+7. [최초 설계 리뷰의 제안과 반영 이력](#7-최초-설계-리뷰의-제안과-반영-이력)
 
 ---
 
@@ -55,6 +55,9 @@
 ---
 
 ### 🐛 1.3 오타 검색(`kw-typo`) 기능 누락 및 빈 인덱스 500 에러
+
+현재 빈 인덱스에는 정렬용 숫자 ID 매핑을 먼저 명시한다. 빈 결과와 정렬 동점을 실제 ES에서 검증한다. 오타 교정은 검색 요구가 정해질 때 검토한다.
+
 - **관련 코드**: `ElasticsearchProductListSearcher.appendKeywordMust()`, `ProductDocument.id`
 - **문제점**:
   1. **오타 교정(`fuzziness`) 누락**: PostgreSQL(`pg_trgm`) 단계에서 테스트하던 오타 키워드(`"Nikke"`, `"Nkie"`, `"Sneeker"`)가 `search_v3.js`의 `kw-typo` 시나리오에 남아있으나, 정작 ES 검색 코드(`appendKeywordMust`)는 `fuzziness("AUTO")` 없이 단순 `match` 쿼리만 수행합니다. 그 결과 현재 `kw-typo` 요청은 전부 **검색 결과 0건(`items: []`)**을 반환하고 있습니다. (k6가 `Array.isArray(items)`만 체크하여 성공으로 집계됨)
@@ -79,23 +82,18 @@
 
 ---
 
-### 🚨 2.2 취약한 멱등성 예외 판별 방식 및 중복 요청의 상품 락 대기
-- **관련 코드**: `OrderService.isIdempotencyKeyViolation()`
-- **현상**:
-  ```java
-  private boolean isIdempotencyKeyViolation(DataIntegrityViolationException ex) {
-      Throwable cause = ex.getMostSpecificCause();
-      String message = cause != null ? cause.getMessage() : ex.getMessage();
-      return message != null && message.toLowerCase().contains("idempotency");
-  }
-  ```
-- **문제점**:
-  1. **에러 메시지 문자열 의존**: DB 버전, 로케일, 드라이버 설정에 따라 에러 메시지 포맷이 달라지면 깨질 수 있습니다. Hibernate `ConstraintViolationException#getConstraintName()` 또는 PostgreSQL SQLState(`"23505"`, `unique_violation`) 코드로 검증하는 것이 안전합니다.
-  2. **동시 중복 요청 시 불필요한 상품 락 경합**: 동일 유저가 따닥(동시 중복 요청)을 발생시켰을 때, 두 번째 요청도 `SELECT ... FOR UPDATE`로 인기 상품의 Row Lock 대기열에 줄을 서서 기다린 뒤에야 `INSERT` 시점에 Unique 제약조건으로 롤백됩니다.
+### 2.2 멱등성 인덱스 오류 판별과 동시 중복 요청의 락 대기
+
+주문 오류의 원인 체인에서 PostgreSQL 서버가 반환한 SQLSTATE, 테이블, 제약 이름을 확인한다. `23505`, `orders`, `uk_orders_member_idempotency_key` 세 값이 모두 맞아야 멱등성 복구를 시도한다. 실제 PostgreSQL 16 유니크 위반으로 복구 및 오류 전파를 검증했다. [판별 코드](../backend/src/main/java/com/marketengine/backend/order/application/OrderService.java)
+
+이미 커밋된 주문의 재시도는 선조회에서 끝난다. 같은 키의 동시 요청이 모두 선조회를 통과하면 양쪽 모두 상품 락을 기다릴 수 있다. 후발 요청은 남은 재고에 따라 재고 부족 또는 주문 INSERT 유니크 위반을 거쳐 기존 주문을 반환한다. 중복 비율이 일반 주문 지연과 커넥션 풀 대기에 미치는 영향은 별도 부하 실험으로 측정한다. [부하 실험 절차](K6_SCENARIOS.md)
 
 ---
 
 ### ⚡ 2.3 고동시성 재고 차감 쿼리 최적화 여지 (`SELECT FOR UPDATE` vs Atomic Update)
+
+현재는 조건부 UPDATE에서 주문 단가를 함께 받는다. 인기 상품의 짧은 SQL 실험에서 두 실행 순서 모두 개선됐고 분산 상품의 결과는 순서에 따라 달랐다. 아래는 도입 전 가설이다. [측정값과 조건](ORDER_INVENTORY.md)
+
 - **관련 코드**: `ProductRepository.findByIdForUpdate()`, `Product.java`
 - **문제점**:
   1. **전체 컬럼 UPDATE (`@DynamicUpdate` 미적용)**: `Product` 엔티티에 `@DynamicUpdate`가 없어 재고(`stock_quantity`) 1개만 줄어들어도 `name`, `description`, `category`, `brand` 등 모든 컬럼을 덮어쓰는 `UPDATE` 문이 실행됩니다. 이는 PostgreSQL의 **HOT(Heap-Only Tuple) 업데이트** 최적화를 방해하고 WAL 크기를 키웁니다.
@@ -111,6 +109,9 @@
 ---
 
 ### 🐛 2.4 주문 수정/삭제 시 재고 미복구 및 전체 조회(`findAll`) OOM 위험
+
+현재 수정은 수량 차이를 반영하고 취소는 한 번만 복원한다. 목록은 ID 커서와 상한을 사용하며 주문 10만 건에서 페이지당 SELECT 한 번을 검증했다. 아래는 변경 전 진단이다. [주문 및 회원 목록 검증](../backend/src/test/java/com/marketengine/backend/order/application/DirectoryPageIntegrationTest.java)
+
 - **관련 코드**: `OrderService.update()`, `OrderService.delete()`, `OrderService.list()`
 - **문제점**:
   1. **재고 정합성 파손**: 주문 생성 시에는 비관적 락으로 엄격하게 재고를 차감하면서, 정작 주문 수량 변경(`update`)이나 주문 삭제/취소(`delete`) 시에는 상품 재고를 복원하거나 가감하는 로직이 전혀 없습니다.
@@ -200,14 +201,16 @@
 
 ---
 
-## 7. 우선순위별 개선 로드맵 (Action Items)
+## 7. 최초 설계 리뷰의 제안과 반영 이력
+
+아래 목록은 리뷰 당시의 제안과 반영 이력이다. 현재의 작업 순서, 실험 채택 조건과 완료 기준은 [프로젝트 개선 계획](PLAN.md)에서 관리한다.
 
 ### 🔥 Priority 1: 코드 결함 및 과설계 즉시 수정 (가성비 최고 / 면접 방어 필수)
 - [x] `ProductListFeedKeyResolver`의 필터 조합별 분기를 제거하고 검색 의미에 맞춰 정규화한 공통 키 적용
 - [x] `ProductService`에서 상품 변경 시 피드 캐시 전체 삭제를 제거하고 항목별 TTL 적용
 - [ ] `ProductDocument.id`에 `@Field(type = FieldType.Long)` 명시 및 `ElasticsearchProductListSearcher` 키워드 검색에 `fuzziness` 옵션 추가
 - [x] 기존 주문 조회와 회원 조회를 `OrderCreateExecutor`의 주문 쓰기 트랜잭션에 통합
-- [ ] `isIdempotencyKeyViolation`에서 주문 멱등성 유니크 제약을 정확히 식별
+- [x] PostgreSQL 오류 코드와 서버가 보고한 테이블, 제약 이름으로 주문 멱등성 인덱스 식별
 - [ ] `OrderService.update/delete` 재고 증감 반영 및 `OrderService.list()` 페이징 적용
 - [x] `RequestResponseLoggingFilter`에서 느린 응답과 오류를 선별하고 요청 ID 생성 비용 축소
 - [x] `hibernate.format_sql: false`를 명시하고 SQL 출력 조건 확인

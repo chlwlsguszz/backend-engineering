@@ -33,10 +33,10 @@ class MemberServiceTest {
 
     @Test
     void create_savesAndReturnsResponse() {
-        CreateMemberRequest request = new CreateMemberRequest("user@test.com", "pw", "tester");
+        CreateMemberRequest request = new CreateMemberRequest("user@test.com", "tester");
 
         when(memberRepository.existsByEmail(request.email())).thenReturn(false);
-        when(memberRepository.save(any(Member.class))).thenAnswer(invocation -> {
+        when(memberRepository.saveAndFlush(any(Member.class))).thenAnswer(invocation -> {
             Member member = invocation.getArgument(0);
             return member;
         });
@@ -45,12 +45,12 @@ class MemberServiceTest {
 
         assertThat(response.email()).isEqualTo("user@test.com");
         assertThat(response.name()).isEqualTo("tester");
-        verify(memberRepository).save(any(Member.class));
+        verify(memberRepository).saveAndFlush(any(Member.class));
     }
 
     @Test
     void create_throwsConflictWhenEmailExists() {
-        CreateMemberRequest request = new CreateMemberRequest("dup@test.com", "pw", "tester");
+        CreateMemberRequest request = new CreateMemberRequest("dup@test.com", "tester");
         when(memberRepository.existsByEmail(request.email())).thenReturn(true);
 
         assertThatThrownBy(() -> memberService.create(request))
@@ -62,7 +62,7 @@ class MemberServiceTest {
     void update_throwsNotFoundWhenMissing() {
         when(memberRepository.findById(1L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> memberService.update(1L, new UpdateMemberRequest("new", "pw")))
+        assertThatThrownBy(() -> memberService.update(1L, new UpdateMemberRequest("new")))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(ex -> assertThat(((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.RESOURCE_NOT_FOUND));
     }

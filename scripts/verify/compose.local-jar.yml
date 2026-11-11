@@ -1,0 +1,9 @@
+# Reuse a locally built bootJar for fast verification without rebuilding Gradle inside Docker.
+services:
+  backend:
+    build: !reset null
+    image: ${BACKEND_TEST_IMAGE:-eclipse-temurin:21-jre}
+    working_dir: /app
+    entrypoint: ["java", "-jar", "/app/app.jar"]
+    volumes:
+      - ${BACKEND_TEST_JAR:?Build backend bootJar first}:/app/app.jar:ro

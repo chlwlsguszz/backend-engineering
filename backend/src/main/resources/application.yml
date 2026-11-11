@@ -6,7 +6,7 @@ spring:
 
   flyway:
     placeholders:
-      catalogProductCount: ${CATALOG_PRODUCT_COUNT:10000000}
+      catalogProductCount: ${CATALOG_PRODUCT_COUNT:1000}
       catalogAsOf: ${CATALOG_AS_OF:2026-11-01T00:00:00Z}
       catalogSeed: ${CATALOG_SEED:42}
 
@@ -35,6 +35,8 @@ spring:
     redis:
       host: ${SPRING_DATA_REDIS_HOST:localhost}
       port: ${SPRING_DATA_REDIS_PORT:16379}
+      connect-timeout: ${SPRING_DATA_REDIS_CONNECT_TIMEOUT:1s}
+      timeout: ${SPRING_DATA_REDIS_TIMEOUT:1s}
 
   cache:
     type: redis
@@ -56,24 +58,46 @@ marketengine:
   logging:
     slow-request-threshold: 200ms
   cache:
+    local:
+      ttl: 2s
+      maximum-entries: 10000
     redis:
       enabled: true
       # Maximum lifetime; each feed cache write receives a TTL between 50% and 100% of this value.
       product-list-feed-ttl: 60s
+      breaker-failure-count: 5
+      breaker-open-duration: 5s
   search:
-    # Step 5: product list API — elasticsearch (default) or postgres (QueryDSL fallback).
+    # Select one search engine; Elasticsearch failures do not automatically fall back to PostgreSQL.
     backend: elasticsearch
+    max-concurrent: 32
+  order:
+    lock-timeout: 500ms
+    statement-timeout: 3s
   elasticsearch:
+    http:
+      max-connections-per-route: 32
+      max-connections: 64
+      connection-acquire-timeout: 1s
+      connect-timeout: 1s
+      read-timeout: 30s
     # Step 1: log cluster info at startup.
     verify-on-startup: true
     index:
       # Step 2: create products index + mapping if missing (tests disable this).
       ensure-on-startup: true
+      # Only used at index creation; existing indexes keep their original physical sort.
+      sort-latest: true
+    outbox:
+      batch-size: 500
+      poll-delay: 250ms
+      max-batches-per-poll: 8
     reindex:
       # 0 runs inline; 1..8 allow the reader to overlap Elasticsearch bulk writes.
       workers: 1
       batch-size: 5000
       log-every-batches: 20
+      suspend-refresh: true
 
 springdoc:
   api-docs:
@@ -85,6 +109,9 @@ springdoc:
 
 management:
   metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
     tags:
       application: ${spring.application.name}
   endpoints:

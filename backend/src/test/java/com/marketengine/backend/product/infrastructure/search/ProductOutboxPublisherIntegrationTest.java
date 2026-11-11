@@ -15,7 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.data.elasticsearch.DataElasticsearchTest;
-import org.springframework.data.domain.PageRequest;
+import com.marketengine.backend.product.domain.ProductListQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.document.Document;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -76,8 +76,8 @@ class ProductOutboxPublisherIntegrationTest {
         assertThat(publisher.publish(List.of(update, create))).containsExactly(update, create);
         operations.indexOps(ProductDocument.class).refresh();
 
-        var searcher = new ElasticsearchProductListSearcher(operations);
-        var products = searcher.search(null, null, null, null, null, null, null, "LATEST", PageRequest.of(0, 12));
+        var searcher = new ElasticsearchProductListSearcher(operations, org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class));
+        var products = searcher.search(new ProductListQuery(null, null, null, null, null, null, null, "LATEST", 0, 12));
         assertThat(products.getContent()).extracting(ProductSummaryResponse::name)
                 .containsExactlyInAnyOrder("Legacy", "New");
     }
@@ -86,7 +86,7 @@ class ProductOutboxPublisherIntegrationTest {
     void returnsOnlySuccessfulItemsWhenOneDocumentFailsMapping() {
         var converter = spy(operations.getElasticsearchConverter());
         Entry invalid = new Entry(1, 1, UUID.randomUUID(), document(1, "Invalid"));
-        doReturn(Document.from(Map.of("stockQuantity", "invalid"))).when(converter).mapObject(invalid.document());
+        doReturn(Document.from(Map.of("available", "invalid"))).when(converter).mapObject(invalid.document());
         var publisherWithInvalidDocument = new ProductOutboxPublisher(client, converter);
         Entry valid = new Entry(2, 2, UUID.randomUUID(), document(2, "Valid"));
 
@@ -95,7 +95,7 @@ class ProductOutboxPublisherIntegrationTest {
     }
 
     private static ProductDocument document(long id, String name) {
-        return new ProductDocument(id, name, BigDecimal.TEN, 3, "TOP", "Brand", "BLACK", "UNISEX",
+        return new ProductDocument(id, name, BigDecimal.TEN, true, "TOP", "Brand", "BLACK", "UNISEX",
                 1, OffsetDateTime.parse("2026-01-01T00:00:00Z"));
     }
 }

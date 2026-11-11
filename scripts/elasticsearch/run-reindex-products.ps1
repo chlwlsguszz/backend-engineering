@@ -29,7 +29,9 @@ Write-Host "Starting postgres + elasticsearch ..."
 $composeFile = Join-Path $repoRoot 'docker-compose.yml'
 Invoke-ReindexStep 'docker.exe' @('compose', '-f', $composeFile, 'up', '-d', '--wait', 'postgres', 'elasticsearch')
 
-$argsList = @("--spring.profiles.active=reindex")
+# An existing schema-only database must retain its Flyway baseline location on every run.
+$profiles = if (($env:SPRING_PROFILES_ACTIVE -split '\s*,\s*') -contains 'empty') { 'empty,reindex' } else { 'reindex' }
+$argsList = @("--spring.profiles.active=$profiles")
 if ($RecreateIndex) {
     $argsList += "--recreate-index"
 }

@@ -5,27 +5,27 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 
 import java.lang.reflect.Method;
 import java.time.Duration;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.cache.annotation.AnnotationCacheOperationSource;
 import org.springframework.cache.interceptor.CacheEvictOperation;
-import org.springframework.data.redis.cache.FixedDurationTtlFunction;
-import org.springframework.data.redis.cache.RedisCacheWriter.TtlFunction;
+import com.marketengine.backend.product.infrastructure.cache.FeedCacheLifetime;
 
 import com.marketengine.backend.product.application.ProductService;
 
 class RedisCacheConfigTest {
 
-    private final RedisCacheConfig config = new RedisCacheConfig();
+    private final Clock clock = Clock.fixed(Instant.parse("2026-11-01T00:00:00Z"), ZoneOffset.UTC);
 
     @Test
     void feedWritesReceiveAnExpiryWithinTheConfiguredWindow() {
         Duration maximum = Duration.ofSeconds(60);
-        TtlFunction ttl = config.productListFeedCacheConfiguration(maximum).getTtlFunction();
-
-        assertThat(ttl).isNotInstanceOf(FixedDurationTtlFunction.class);
+        var ttl = new FeedCacheLifetime(maximum, clock);
         for (int i = 0; i < 64; i++) {
-            assertThat(ttl.getTimeToLive("test-feed-key", null))
+            assertThat(Duration.between(clock.instant(), ttl.wrap(null).expiresAt()))
                     .isBetween(Duration.ofSeconds(30), maximum);
         }
     }
@@ -33,17 +33,16 @@ class RedisCacheConfigTest {
     @Test
     void oneMillisecondMaximumStillExpiresTheEntry() {
         Duration minimum = Duration.ofMillis(1);
-        TtlFunction ttl = config.productListFeedCacheConfiguration(minimum).getTtlFunction();
-
-        assertThat(ttl.getTimeToLive("test-feed-key", null)).isEqualTo(minimum);
+        var ttl = new FeedCacheLifetime(minimum, clock);
+        assertThat(Duration.between(clock.instant(), ttl.wrap(null).expiresAt())).isEqualTo(minimum);
     }
 
     @Test
     void rejectsTtlValuesThatWouldBePersistentAtRedisPrecision() {
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> config.productListFeedCacheConfiguration(Duration.ZERO));
+                .isThrownBy(() -> new FeedCacheLifetime(Duration.ZERO, clock));
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> config.productListFeedCacheConfiguration(Duration.ofNanos(999_999)));
+                .isThrownBy(() -> new FeedCacheLifetime(Duration.ofNanos(999_999), clock));
     }
 
     @Test

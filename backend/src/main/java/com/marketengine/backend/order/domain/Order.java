@@ -4,6 +4,8 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
 import com.marketengine.backend.member.domain.Member;
+import com.marketengine.backend.common.exception.BusinessException;
+import com.marketengine.backend.common.exception.ErrorCode;
 import com.marketengine.backend.product.domain.Product;
 
 import jakarta.persistence.Column;
@@ -27,13 +29,15 @@ import lombok.NoArgsConstructor;
 @Table(
         name = "orders",
         uniqueConstraints = @UniqueConstraint(
-                name = "uk_orders_member_idempotency_key",
+                name = Order.IDEMPOTENCY_CONSTRAINT,
                 columnNames = {"member_id", "idempotency_key"}
         )
 )
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Order {
+
+    public static final String IDEMPOTENCY_CONSTRAINT = "uk_orders_member_idempotency_key";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -49,6 +53,9 @@ public class Order {
 
     @Column(nullable = false)
     private int quantity;
+
+    @Column(name = "requested_quantity", nullable = false, updatable = false)
+    private int requestedQuantity;
 
     @Column(name = "unit_price", nullable = false, precision = 19, scale = 4)
     private BigDecimal unitPrice;
@@ -77,6 +84,7 @@ public class Order {
         this.member = member;
         this.product = product;
         this.quantity = quantity;
+        this.requestedQuantity = quantity;
         this.unitPrice = unitPrice;
         this.status = status;
         this.idempotencyKey = idempotencyKey;
@@ -90,12 +98,21 @@ public class Order {
         }
     }
 
-    public void changeStatus(OrderStatus status) {
-        this.status = status;
-    }
-
-    public void changeQuantity(int quantity) {
-        this.quantity = quantity;
-        this.totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity));
+    /** Positive delta reserves additional units; a negative delta releases units. */
+    public int revise(OrderStatus next, int nextQuantity) {
+        if (next == null || nextQuantity < 1) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST, "A status and positive quantity are required");
+        }
+        if ((status == OrderStatus.CANCELLED && next != OrderStatus.CANCELLED)
+                || (next == OrderStatus.CANCELLED && nextQuantity != quantity)
+                || (status == OrderStatus.CONFIRMED && next == OrderStatus.CREATED)) {
+            throw new BusinessException(ErrorCode.CONFLICT, "Invalid order transition");
+        }
+        int reservedBefore = status == OrderStatus.CANCELLED ? 0 : quantity;
+        int reservedAfter = next == OrderStatus.CANCELLED ? 0 : nextQuantity;
+        this.quantity = nextQuantity;
+        this.status = next;
+        this.totalAmount = unitPrice.multiply(BigDecimal.valueOf(nextQuantity));
+        return reservedAfter - reservedBefore;
     }
 }

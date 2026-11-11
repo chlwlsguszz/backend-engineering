@@ -1,0 +1,21 @@
+# Overlay for the disposable verification project created by run-commerce-smoke.ps1.
+services:
+  postgres:
+    labels:
+      com.marketengine.verification: ${SMOKE_RUN_TOKEN:?Use run-commerce-smoke.ps1}
+    ports: !reset []
+  redis:
+    labels:
+      com.marketengine.verification: ${SMOKE_RUN_TOKEN:?Use run-commerce-smoke.ps1}
+    ports: !reset []
+  elasticsearch:
+    labels:
+      com.marketengine.verification: ${SMOKE_RUN_TOKEN:?Use run-commerce-smoke.ps1}
+    ports: !override ["127.0.0.1::9200"]
+  backend:
+    labels:
+      com.marketengine.verification: ${SMOKE_RUN_TOKEN:?Use run-commerce-smoke.ps1}
+    ports: !override ["127.0.0.1::8080"]
+    environment:
+      CATALOG_PRODUCT_COUNT: "1000"
+      SPRING_PROFILES_ACTIVE: default

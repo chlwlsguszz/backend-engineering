@@ -1,0 +1,30 @@
+# Disposable database and backend for the real browser checkout test.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: browser_test
+      POSTGRES_USER: browser_test
+      POSTGRES_PASSWORD: browser_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U browser_test -d browser_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+  backend:
+    build: ../../backend
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/browser_test
+      SPRING_DATASOURCE_USERNAME: browser_test
+      SPRING_DATASOURCE_PASSWORD: browser_test
+      CATALOG_PRODUCT_COUNT: "32"
+      MARKETENGINE_ELASTICSEARCH_ENABLED: "false"
+      SPRING_DATA_ELASTICSEARCH_REPOSITORIES_ENABLED: "false"
+      MARKETENGINE_SEARCH_BACKEND: postgres
+      MARKETENGINE_CACHE_REDIS_ENABLED: "false"
+      MANAGEMENT_HEALTH_REDIS_ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1::8080"

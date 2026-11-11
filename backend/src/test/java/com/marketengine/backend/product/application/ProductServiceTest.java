@@ -112,7 +112,8 @@ class ProductServiceTest {
                         "NAVY",
                         "WOMEN",
                         "ACTIVE",
-                        500
+                        500,
+                        0L
                 )
         );
 

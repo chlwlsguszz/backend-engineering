@@ -5,12 +5,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -28,6 +32,10 @@ import com.marketengine.backend.order.domain.OrderRepository;
 import com.marketengine.backend.order.domain.OrderStatus;
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductCategory;
+import com.marketengine.backend.product.infrastructure.ProductInventory;
+import com.marketengine.backend.product.infrastructure.ProductInventory.Reservation;
+import com.marketengine.backend.product.infrastructure.search.ProductSearchOutbox;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class OrderServiceTest {
@@ -37,6 +45,15 @@ class OrderServiceTest {
 
     @Mock
     private OrderCreateExecutor orderCreateExecutor;
+
+    @Mock
+    private ProductInventory inventory;
+
+    @Mock
+    private ProductSearchOutbox outbox;
+
+    @Mock
+    private OrderTransactionLimits transactionLimits;
 
     @InjectMocks
     private OrderService orderService;
@@ -53,14 +70,25 @@ class OrderServiceTest {
         verifyNoMoreInteractions(orderCreateExecutor);
     }
 
-    @Test
-    void create_preservesInsufficientStockWhenNoConcurrentOrderExists() {
+    @ParameterizedTest
+    @EnumSource(value = ErrorCode.class, names = {"INSUFFICIENT_STOCK", "PRODUCT_NOT_FOR_SALE"})
+    void create_preservesAvailabilityFailureWhenNoConcurrentOrderExists(ErrorCode code) {
         var request = new CreateOrderRequest(1L, 1001L, 1, "last-unit");
-        var failure = new BusinessException(ErrorCode.INSUFFICIENT_STOCK, "No units available");
+        var failure = new BusinessException(code);
         when(orderCreateExecutor.execute(request)).thenThrow(failure);
         when(orderCreateExecutor.findExistingResponse(request)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> orderService.create(request)).isSameAs(failure);
+    }
+
+    @Test
+    void create_replaysConcurrentOrderIfTheProductWasWithdrawnBeforeTheDuplicateReservedStock() {
+        var request = new CreateOrderRequest(1L, 1001L, 1, "withdrawn-during-retry");
+        var committed = mock(OrderResponse.class);
+        when(orderCreateExecutor.execute(request)).thenThrow(new BusinessException(ErrorCode.PRODUCT_NOT_FOR_SALE));
+        when(orderCreateExecutor.findExistingResponse(request)).thenReturn(Optional.of(committed));
+
+        assertThat(orderService.create(request)).isSameAs(committed);
     }
 
     @Test
@@ -74,14 +102,15 @@ class OrderServiceTest {
     }
 
     @Test
-    void create_readsCommittedOrderAfterConcurrentIdempotencyKeyViolation() {
+    void create_propagatesUniqueViolationWithoutPostgresConstraintMetadata() {
         var request = new CreateOrderRequest(1L, 1001L, 1, "duplicate");
-        var expected = mock(OrderResponse.class);
-        when(orderCreateExecutor.execute(request))
-                .thenThrow(new DataIntegrityViolationException("uk_orders_member_idempotency_key"));
-        when(orderCreateExecutor.findExistingResponse(request)).thenReturn(Optional.of(expected));
+        var failure = new DataIntegrityViolationException("order insert failed",
+                new SQLException("duplicate key: uk_orders_member_idempotency_key", "23505"));
+        when(orderCreateExecutor.execute(request)).thenThrow(failure);
 
-        assertThat(orderService.create(request)).isSameAs(expected);
+        assertThatThrownBy(() -> orderService.create(request)).isSameAs(failure);
+        verify(orderCreateExecutor).execute(request);
+        verifyNoMoreInteractions(orderCreateExecutor);
     }
 
     @Test
@@ -100,12 +129,16 @@ class OrderServiceTest {
                 100
         );
         Order order = new Order(member, product, 1, new BigDecimal("30.00"), OrderStatus.CREATED, "key-1");
-        when(orderRepository.findById(10L)).thenReturn(Optional.of(order));
+        ReflectionTestUtils.setField(product, "id", 2L);
+        when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
+        when(inventory.reserve(2L, 1)).thenReturn(new Reservation(BigDecimal.valueOf(30), false));
 
         OrderResponse response = orderService.update(10L, new UpdateOrderRequest(OrderStatus.CONFIRMED, 2));
 
         assertThat(response.status()).isEqualTo(OrderStatus.CONFIRMED);
         assertThat(response.quantity()).isEqualTo(2);
         assertThat(response.totalAmount()).isEqualByComparingTo("60.00");
+        verify(inventory).reserve(2L, 1);
+        verifyNoInteractions(outbox);
     }
 }

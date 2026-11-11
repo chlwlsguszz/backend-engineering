@@ -2,9 +2,11 @@ package com.marketengine.backend.product.infrastructure.search;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Collections;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.data.domain.SliceImpl;
@@ -13,11 +15,13 @@ import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.SearchHit;
 import org.springframework.data.elasticsearch.core.SearchHits;
 import org.springframework.stereotype.Component;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
 import com.marketengine.backend.product.application.ProductListSearcher;
 import com.marketengine.backend.product.domain.ProductCategory;
-import com.marketengine.backend.product.domain.ProductSearchKeywords;
+import com.marketengine.backend.product.domain.ProductCursor;
+import com.marketengine.backend.product.domain.ProductListQuery;
 
 import co.elastic.clients.elasticsearch._types.SortOptions;
 import co.elastic.clients.elasticsearch._types.SortOrder;
@@ -26,7 +30,7 @@ import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Step 5: list/search via Elasticsearch (match AND on name tokens, keyword filters, slice paging).
+ * Catalogue search with query-time vocabulary, bounded typo tolerance, filters and stable field sorting.
  */
 @Component
 @RequiredArgsConstructor
@@ -34,34 +38,40 @@ import lombok.RequiredArgsConstructor;
 public class ElasticsearchProductListSearcher implements ProductListSearcher {
 
     private final ElasticsearchOperations elasticsearchOperations;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
-    public Slice<ProductSummaryResponse> search(
-            String keyword,
-            ProductCategory category,
-            String brand,
-            String gender,
-            String color,
-            Integer minPrice,
-            Integer maxPrice,
-            String sortBy,
-            Pageable pageable
-    ) {
-        int fetchSize = pageable.getPageSize() + 1;
-        Pageable fetchPageable = PageRequest.of(pageable.getPageNumber(), fetchSize, pageable.getSort());
+    public String cursorScope() {
+        return ProductCursor.ELASTICSEARCH;
+    }
 
-        NativeQuery query = NativeQuery.builder()
-                .withQuery(buildQuery(keyword, category, brand, gender, color, minPrice, maxPrice))
-                .withSort(buildSort(sortBy))
-                .withPageable(fetchPageable)
-                .withTrackTotalHits(false)
-                .build();
+    @Override
+    public Slice<ProductSummaryResponse> search(ProductListQuery criteria) {
+        Pageable pageable = criteria.pageable();
+        ProductCursor cursor = ProductCursor.decode(criteria, cursorScope());
+        // Spring Data obtains ES "from" from Pageable and "size" from getRequestSize().
+        // Increasing the page size itself shifts the start of every later page.
+        var builder = NativeQuery.builder()
+                .withQuery(buildQuery(criteria)).withSort(buildSort(criteria.sortBy()))
+                .withPageable(pageable).withTrackTotalHits(false);
+        if (cursor != null) {
+            builder.withSearchAfter(cursor.elasticsearchSortValues());
+        }
+        NativeQuery sliceQuery = new NativeQuery(builder) {
+            @Override
+            public Integer getRequestSize() {
+                return criteria.fetchSize();
+            }
+        };
+        SearchHits<ProductDocument> hits = elasticsearchOperations.search(sliceQuery, ProductDocument.class);
 
-        SearchHits<ProductDocument> hits = elasticsearchOperations.search(query, ProductDocument.class);
-
-        List<ProductSummaryResponse> items = hits.getSearchHits().stream()
+        List<ProductDocument> documents = hits.getSearchHits().stream()
                 .map(SearchHit::getContent)
-                .map(ElasticsearchProductListSearcher::toSummary)
+                .toList();
+
+        Map<Long, Boolean> legacyAvailability = readLegacyAvailability(documents);
+        List<ProductSummaryResponse> items = documents.stream()
+                .map(document -> toSummary(document, legacyAvailability))
                 .toList();
 
         boolean hasNext = items.size() > pageable.getPageSize();
@@ -72,45 +82,31 @@ public class ElasticsearchProductListSearcher implements ProductListSearcher {
         return new SliceImpl<>(items, pageable, hasNext);
     }
 
-    private static Query buildQuery(
-            String keyword,
-            ProductCategory category,
-            String brand,
-            String gender,
-            String color,
-            Integer minPrice,
-            Integer maxPrice
-    ) {
+    private static Query buildQuery(ProductListQuery search) {
         BoolQuery.Builder bool = ProductDocument.visibleProducts();
 
-        appendKeywordMust(bool, keyword);
+        ProductKeywordQuery.appendTo(bool, search.keyword());
 
-        if (category != null) {
-            bool.filter(filterTerm("category", category.name()));
+        if (search.category() != null) {
+            bool.filter(filterTerm("category", search.category().name()));
         }
-        if (hasText(brand)) {
-            bool.filter(filterTerm("brand", brand.trim()));
+        if (search.brand() != null) {
+            bool.filter(filterTerm("brand", search.brand()));
         }
-        if (hasText(gender)) {
-            bool.filter(filterTerm("gender", gender.trim()));
+        if (search.gender() != null) {
+            bool.filter(filterTerm("gender", search.gender()));
         }
-        if (hasText(color)) {
-            bool.filter(filterTerm("color", color.trim()));
+        if (search.color() != null) {
+            bool.filter(filterTerm("color", search.color()));
         }
-        if (minPrice != null) {
-            bool.filter(filterRangeGte("priceAmount", minPrice.doubleValue()));
+        if (search.minPrice() != null) {
+            bool.filter(filterRangeGte("priceAmount", search.minPrice().doubleValue()));
         }
-        if (maxPrice != null) {
-            bool.filter(filterRangeLte("priceAmount", maxPrice.doubleValue()));
+        if (search.maxPrice() != null) {
+            bool.filter(filterRangeLte("priceAmount", search.maxPrice().doubleValue()));
         }
 
         return Query.of(query -> query.bool(bool.build()));
-    }
-
-    private static void appendKeywordMust(BoolQuery.Builder bool, String keyword) {
-        for (String token : ProductSearchKeywords.tokens(keyword)) {
-            bool.must(must -> must.match(match -> match.field("name").query(token)));
-        }
     }
 
     private static Query filterTerm(String field, String value) {
@@ -138,16 +134,29 @@ public class ElasticsearchProductListSearcher implements ProductListSearcher {
         );
     }
 
-    private static boolean hasText(String value) {
-        return value != null && !value.trim().isEmpty();
+    private Map<Long, Boolean> readLegacyAvailability(List<ProductDocument> documents) {
+        List<Long> legacyIds = documents.stream().filter(document -> document.getAvailable() == null)
+                .map(ProductDocument::getId).toList();
+        if (legacyIds.isEmpty()) return Map.of();
+
+        // Old indices contain a quantity, but not sale status. One bounded query keeps them usable
+        // until the user rebuilds the index, without guessing that positive stock means on sale.
+        String placeholders = String.join(",", Collections.nCopies(legacyIds.size(), "?"));
+        Map<Long, Boolean> availability = new HashMap<>();
+        jdbcTemplate.query("SELECT id, (status = 'ACTIVE' AND stock_quantity > 0) AS available "
+                        + "FROM products WHERE id IN (" + placeholders + ")",
+                result -> { availability.put(result.getLong("id"), result.getBoolean("available")); },
+                legacyIds.toArray());
+        return availability;
     }
 
-    private static ProductSummaryResponse toSummary(ProductDocument document) {
+    private static ProductSummaryResponse toSummary(ProductDocument document, Map<Long, Boolean> legacyAvailability) {
         return new ProductSummaryResponse(
                 document.getId(),
                 document.getName(),
                 document.getPriceAmount(),
-                document.getStockQuantity(),
+                document.getAvailable() != null ? document.getAvailable()
+                        : legacyAvailability.getOrDefault(document.getId(), false),
                 ProductCategory.valueOf(document.getCategory()),
                 document.getBrand(),
                 document.getColor(),

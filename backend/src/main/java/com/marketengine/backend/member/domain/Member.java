@@ -44,7 +44,4 @@ public class Member {
         this.name = name;
     }
 
-    public void changePasswordHash(String passwordHash) {
-        this.passwordHash = passwordHash;
-    }
 }

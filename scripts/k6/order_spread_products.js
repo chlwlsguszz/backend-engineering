@@ -1,3 +1,4 @@
+// Historical fixed-ID fixture. Use order_scenarios.js and an exported catalog for new measurements.
 import http from "k6/http";
 import { check, sleep } from "k6";
 import { Counter } from "k6/metrics";

@@ -8,10 +8,13 @@ import org.springframework.http.HttpStatus;
 public enum ErrorCode {
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "Resource not found"),
     INSUFFICIENT_STOCK(HttpStatus.CONFLICT, "Insufficient stock"),
+    PRODUCT_NOT_FOR_SALE(HttpStatus.CONFLICT, "Product is not for sale"),
     IDEMPOTENCY_KEY_CONFLICT(HttpStatus.CONFLICT, "Idempotency key already used with a different request"),
     CONFLICT(HttpStatus.CONFLICT, "Conflict"),
+    ORDER_BUSY(HttpStatus.SERVICE_UNAVAILABLE, "Order is busy. Retry with the same idempotency key."),
     VALIDATION_FAILED(HttpStatus.BAD_REQUEST, "Validation failed"),
     INVALID_REQUEST(HttpStatus.BAD_REQUEST, "Invalid request"),
+    SEARCH_CAPACITY_EXCEEDED(HttpStatus.SERVICE_UNAVAILABLE, "Search is busy. Please retry shortly."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "Internal server error");
 
     private final HttpStatus httpStatus;

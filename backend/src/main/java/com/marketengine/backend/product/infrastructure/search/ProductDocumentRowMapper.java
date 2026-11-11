@@ -13,7 +13,7 @@ final class ProductDocumentRowMapper {
                 row.getLong("id"),
                 row.getString("name"),
                 row.getBigDecimal("price_amount"),
-                row.getInt("stock_quantity"),
+                row.getInt("stock_quantity") > 0 && "ACTIVE".equals(row.getString("status")),
                 row.getString("category"),
                 row.getString("brand"),
                 row.getString("color"),

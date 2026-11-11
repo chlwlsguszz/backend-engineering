@@ -9,11 +9,13 @@ import org.springframework.data.domain.SliceImpl;
 
 import com.querydsl.core.types.Order;
 import com.querydsl.core.types.OrderSpecifier;
+import com.querydsl.core.types.Projections;
 import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.core.types.dsl.Expressions;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 
 import jakarta.persistence.EntityManager;
+import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
 
 public class ProductRepositoryImpl implements ProductQueryRepository {
 
@@ -24,33 +26,31 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
     }
 
     @Override
-    public Slice<Product> search(
-            String keyword,
-            ProductCategory category,
-            String brand,
-            String gender,
-            String color,
-            Integer minPrice,
-            Integer maxPrice,
-            String sortBy,
-            Pageable pageable
-    ) {
+    public Slice<ProductSummaryResponse> search(ProductListQuery query) {
         QProduct product = QProduct.product;
+        Pageable pageable = query.pageable();
+        ProductCursor cursor = ProductCursor.decode(query, ProductCursor.POSTGRES);
 
-        List<Product> rows = queryFactory
-                .selectFrom(product)
+        List<ProductSummaryResponse> rows = queryFactory
+                .select(Projections.constructor(ProductSummaryResponse.class,
+                        product.id, product.name, product.priceAmount,
+                        product.status.eq("ACTIVE").and(product.stockQuantity.gt(0)),
+                        product.category, product.brand, product.color, product.gender,
+                        product.popularityScore, product.createdAt))
+                .from(product)
                 .where(
-                        keywordContains(keyword),
-                        categoryEq(category),
-                        brandEq(brand),
-                        genderEq(gender),
-                        colorEq(color),
-                        minPriceGoe(minPrice),
-                        maxPriceLoe(maxPrice)
+                        keywordContains(query.keyword()),
+                        before(cursor),
+                        query.category() == null ? null : product.category.eq(query.category()),
+                        query.brand() == null ? null : product.brand.eq(query.brand()),
+                        query.gender() == null ? null : product.gender.eq(query.gender()),
+                        query.color() == null ? null : product.color.eq(query.color()),
+                        minPriceGoe(query.minPrice()),
+                        maxPriceLoe(query.maxPrice())
                 )
-                .orderBy(orderSpecifiers(sortBy))
+                .orderBy(orderSpecifiers(query.sortBy()))
                 .offset(pageable.getOffset())
-                .limit(pageable.getPageSize() + 1L)
+                .limit(query.fetchSize())
                 .fetch();
 
         boolean hasNext = rows.size() > pageable.getPageSize();
@@ -59,6 +59,17 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
         }
 
         return new SliceImpl<>(rows, pageable, hasNext);
+    }
+
+    private BooleanExpression before(ProductCursor cursor) {
+        if (cursor == null) return null;
+        QProduct product = QProduct.product;
+        if (cursor.popularityScore() != null) {
+            return product.popularityScore.lt(cursor.popularityScore())
+                    .or(product.popularityScore.eq(cursor.popularityScore()).and(product.id.lt(cursor.id())));
+        }
+        return product.createdAt.lt(cursor.createdAt())
+                .or(product.createdAt.eq(cursor.createdAt()).and(product.id.lt(cursor.id())));
     }
 
     private OrderSpecifier<?>[] orderSpecifiers(String sortBy) {
@@ -85,39 +96,12 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
     }
 
     private BooleanExpression keywordTokenMatch(String token) {
+        String literal = token.replace("!", "!!").replace("%", "!%").replace("_", "!_");
         return Expressions.booleanTemplate(
-                "lower({0}) like {1}",
+                "lower({0}) like {1} escape '!'",
                 QProduct.product.name,
-                "%" + token + "%"
+                "%" + literal + "%"
         );
-    }
-
-    private BooleanExpression categoryEq(ProductCategory category) {
-        if (category == null) {
-            return null;
-        }
-        return QProduct.product.category.eq(category);
-    }
-
-    private BooleanExpression brandEq(String brand) {
-        if (!hasText(brand)) {
-            return null;
-        }
-        return QProduct.product.brand.eq(brand.trim());
-    }
-
-    private BooleanExpression genderEq(String gender) {
-        if (!hasText(gender)) {
-            return null;
-        }
-        return QProduct.product.gender.eq(gender.trim());
-    }
-
-    private BooleanExpression colorEq(String color) {
-        if (!hasText(color)) {
-            return null;
-        }
-        return QProduct.product.color.eq(color.trim());
     }
 
     private BooleanExpression minPriceGoe(Integer minPrice) {
@@ -134,7 +118,4 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
         return QProduct.product.priceAmount.loe(BigDecimal.valueOf(maxPrice));
     }
 
-    private boolean hasText(String value) {
-        return value != null && !value.trim().isEmpty();
-    }
 }

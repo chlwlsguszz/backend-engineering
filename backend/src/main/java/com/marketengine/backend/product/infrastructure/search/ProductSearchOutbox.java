@@ -42,7 +42,7 @@ public class ProductSearchOutbox {
 
     private static final String LOAD_CLAIMED = """
             SELECT c.product_id, c.revision, c.lease_token, p.id, p.name, p.price_amount,
-                   p.stock_quantity, p.category, p.brand, p.color, p.gender, p.popularity_score, p.created_at
+                   p.stock_quantity, p.status, p.category, p.brand, p.color, p.gender, p.popularity_score, p.created_at
             FROM product_search_outbox c LEFT JOIN products p ON p.id = c.product_id
             WHERE c.product_id = ANY (?) AND c.lease_token = ?
             """;

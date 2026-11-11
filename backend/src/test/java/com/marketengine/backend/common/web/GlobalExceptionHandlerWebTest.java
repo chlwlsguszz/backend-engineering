@@ -4,8 +4,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -45,5 +48,23 @@ class GlobalExceptionHandlerWebTest {
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.error.code").value(ErrorCode.VALIDATION_FAILED.name()))
                 .andExpect(jsonPath("$.error.details.fieldErrors.name").exists());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"lock-timeout", "statement-timeout", "uncategorized/55P03", "uncategorized/57014"})
+    void databaseDeadlinesReturnRetryableServiceUnavailable(String endpoint) throws Exception {
+        mockMvc.perform(get("/__exception-test/" + endpoint))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "1"))
+                .andExpect(jsonPath("$.error.code").value(ErrorCode.ORDER_BUSY.name()))
+                .andExpect(jsonPath("$.error.details.retryable").value(true));
+    }
+
+    @Test
+    void unrelatedUnclassifiedSqlFailureIsNotAdvertisedAsRetryable() throws Exception {
+        mockMvc.perform(get("/__exception-test/uncategorized/XX000"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(header().doesNotExist("Retry-After"))
+                .andExpect(jsonPath("$.error.code").value(ErrorCode.INTERNAL_ERROR.name()));
     }
 }

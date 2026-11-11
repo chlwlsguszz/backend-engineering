@@ -1,6 +1,8 @@
 package com.marketengine.backend.member.api;
 
-import java.util.List;
+import org.springframework.web.bind.annotation.RequestParam;
+import com.marketengine.backend.common.response.CursorPage;
+import io.swagger.v3.oas.annotations.Operation;
 
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -38,8 +40,10 @@ public class MemberController {
     }
 
     @GetMapping
-    public ApiResponse<List<MemberResponse>> list() {
-        return ApiResponse.ok(memberService.list());
+    @Operation(summary = "List by descending ID", description = "Pass nextCursor as beforeId. Page size is 1 to 100.")
+    public ApiResponse<CursorPage<MemberResponse>> list(@RequestParam(required = false) Long beforeId,
+            @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(memberService.list(beforeId, size));
     }
 
     @PutMapping("/{memberId}")

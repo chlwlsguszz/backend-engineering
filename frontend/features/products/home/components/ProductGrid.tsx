@@ -21,6 +21,7 @@ export function ProductGrid({ products }: Props) {
               alt={product.name}
               width={600}
               height={400}
+              sizes="(max-width: 639px) 100vw, (max-width: 1023px) 50vw, 33vw"
               className="h-36 w-full rounded-xl border border-slate-200 object-cover"
             />
             <div className="flex items-center justify-between">
@@ -32,7 +33,7 @@ export function ProductGrid({ products }: Props) {
             <h3 className="mt-2 line-clamp-1 text-base font-semibold text-slate-900">{product.name}</h3>
             <p className="mt-3 text-lg font-bold text-slate-900">{Number(product.priceAmount).toLocaleString()}원</p>
             <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
-              <span>재고 {product.stockQuantity}</span>
+              <span>{product.available ? "구매 가능" : "현재 구매 불가"}</span>
               <span>인기도 {product.popularityScore}</span>
             </div>
             <div className="mt-2 flex items-center gap-2 text-xs">
