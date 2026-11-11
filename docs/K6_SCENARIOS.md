@@ -23,7 +23,7 @@ k6 run -e CASE=pagination scripts/k6/search_scenarios.js
 - **검색어별 결과 (`discovery`).** 넓게 매칭되는 검색어, 존재하는 모델 코드, 의도적으로 없는 코드를 구분한다. 응답 시간은 검색 종류별로 비교한다. 결과가 드문 키워드도 같은 페이지를 다시 요청하면 캐시에 적중할 수 있다.
 - **연속 탐색 (`browse`).** 한 사용자가 같은 조건에서 응답의 `nextCursor`를 다음 요청의 `after`로 전달한다. `hasNext`가 거짓이면 중단한다. 처음, 1~2회 추가 탐색, 3회 이상 추가 탐색의 지연을 나눠 본다. 커서 요청은 모두 캐시를 우회한다. RATE는 세션/초이며 HTTP 요청/초와 다르다.
 
-PG의 상품명 검색은 대소문자를 정규화한 부분 문자열, ES는 분석한 토큰을 사용한다. 최신순에서 PostgreSQL은 원본 시각, 기존 ES `date` 매핑은 밀리초로 정렬하고 각 저장소에서 동점이면 ID가 큰 상품이 먼저다. 생성 시각이 같은 밀리초 안에서만 다른 상품은 양쪽의 상대 순서가 달라질 수 있다. 페이지 경계 실험은 고정된 카탈로그와 한 저장소에서 이어지는 페이지를 사용한다.
+PG의 상품명 검색은 대소문자를 정규화한 부분 문자열, ES는 분석한 토큰과 카탈로그 별칭을 사용한다. 최신순에서 PostgreSQL은 원본 시각, 기존 ES `date` 매핑은 밀리초로 정렬하고 각 저장소에서 동점이면 ID가 큰 상품이 먼저다. 생성 시각이 같은 밀리초 안에서만 다른 상품은 양쪽의 상대 순서가 달라질 수 있다. 페이지 경계 실험은 고정된 카탈로그와 한 저장소에서 이어지는 페이지를 사용한다.
 
 ```powershell
 k6 run -e CASE=feed -e RATE=5 -e DURATION=30s scripts/k6/search_scenarios.js
@@ -32,6 +32,25 @@ k6 run -e CASE=browse -e RATE=5 -e DURATION=30s -e MAX_PAGE=8 scripts/k6/search_
 ```
 
 `RATE`는 초당 시작하는 탐색 세션 수다. 연속 탐색은 한 세션에서 여러 번 요청하므로 실제 HTTP 처리량은 k6의 `http_reqs`로 읽는다. 10만 건 파일럿에서 `discovery`를 실행할 때는 `-e MODEL_COUNT=25000`을 추가한다. [검색 스크립트](../scripts/k6/search_scenarios.js)
+
+### 검색 품질 회귀 평가
+
+ES 검색은 [카탈로그 검색어 규칙](../backend/src/main/java/com/marketengine/backend/product/infrastructure/search/ProductKeywordQuery.java)을 조회 시점에 적용한다. 기존 인덱스와 매핑을 사용하므로 이 변경을 위한 재색인은 필요하지 않다.
+
+- `나이키 검정 후드`, `뉴발란스 러닝화`처럼 등록된 브랜드·색상·성별·카테고리·품목 표현을 영문 카탈로그에 연결한다. 원문 상품명도 함께 검색하므로 실제 한글 상품명도 유지된다. `운동화`는 Sneakers와 Running Shoes를 포함한다.
+- `New Balance`, `Long Sleeve` 같은 등록된 여러 단어의 표현은 하나의 구절로 해석한다. 상품명에서는 단어가 연속해야 하며, 브랜드 등 속성에서는 전체 값으로 비교한다. 나머지 검색 조건과 명시적 필터는 모두 충족해야 한다.
+- 별칭이 아닌 ASCII 영문 6자 이상 단어에는 편집 거리 1, 접두사 2자 고정, 최대 확장 20개로 오타를 허용한다. 예를 들어 `hoodiee`, `snekaers`를 다룬다. `shirt`/`short` 같은 짧은 단어와 숫자가 포함된 모델·컬렉션 코드는 확장하지 않는다. 등록되지 않은 한글 표현의 형태소 분석이나 오타 교정은 제공하지 않는다.
+- 정렬은 최신순 또는 인기순이며, 관련도순 순위 평가는 이번 범위에 포함하지 않는다. 검색 결과가 없어진 페이지에서만 느슨한 검색으로 전환하지 않으므로 같은 조건으로 페이지를 이어 읽을 수 있다. PG의 리터럴 부분 문자열 검색 계약은 그대로다.
+
+[검색 품질 평가셋](../backend/src/test/resources/search/product-search-quality.json)은 상품 33개와 검색어 87개(결과 있음 75개, 결과 없음 12개)의 기대 상품을 담는다. [통합 테스트](../backend/src/test/java/com/marketengine/backend/product/infrastructure/search/ProductSearchContractIntegrationTest.java)는 이전 이름 토큰 검색과 개선된 검색을 같은 데이터에서 비교하고, 오탐 방지·명시적 필터·삭제 상품 제외·최신순/인기순의 offset 및 cursor 탐색도 검사한다. 실행 시 기대 상품을 하나 이상 찾은 검색어 비율, 결과 집합이 정확히 일치한 사례 수, 전체 반환 상품 중 기대 상품 비율을 출력한다. 이 평가셋의 결과는 해당 예시에 대한 회귀 지표이며 운영 검색 품질이나 1,000만 건 성능을 입증하지 않는다.
+
+Docker와 JDK 21을 준비한 뒤 저장소 루트에서 실행한다.
+
+```powershell
+.\backend\gradlew.bat -p backend test --tests '*ProductKeywordQueryTest' --tests '*ProductSearchContractIntegrationTest'
+```
+
+Gradle HTML 보고서는 `backend/build/reports/tests/test/index.html`에 생성된다. 검색 규칙 변경 후 이전 결과를 재사용하지 않도록 Redis 피드 이름은 `productListFeed:v6`이고 ES 커서에도 검색 규칙 버전을 포함한다. 배포 전 발급된 ES 커서는 다시 사용할 수 없으므로 첫 페이지부터 조회한다. 성능 비교는 같은 검색어 분포와 캐시 조건으로 별도 수행한다.
 
 ### 같은 피드로 캐시 효과 비교
 
@@ -60,7 +79,7 @@ k6 run -e CASE=feed scripts/k6/search_scenarios.js
 현재 Redis 피드 키의 TTL은 기본 30~60초이고 Caffeine은 최대 2초다. Caffeine은 Redis의 절대 만료 시각을 넘기지 않는다. 캐시 ON/OFF 설정은 두 계층 모두에 적용된다. 예열한 키도 측정 도중 만료될 수 있으므로 결과에 TTL 설정을 함께 기록한다. 캐시를 켠 실험 DB에서 필터 없이 최신순 첫 페이지(`page=0`, `size=12`)를 조회한 직후 아래 한 줄로 남은 시간을 밀리초 단위로 확인한다.
 
 ```powershell
-docker compose exec -T redis redis-cli PTTL 'productListFeed:v5:elasticsearch::feed:q2?cat=&brand=&gender=&color=&min=&max=&kw=&sort=LATEST&page=0&size=12'
+docker compose exec -T redis redis-cli PTTL 'productListFeed:v6:elasticsearch::feed:q2?cat=&brand=&gender=&color=&min=&max=&kw=&sort=LATEST&page=0&size=12'
 ```
 
 상품 수정의 영향을 확인하려면, 양수인 키의 TTL을 기록하고 다른 상품 하나를 수정한 직후 피드를 다시 조회하기 전에 같은 키를 확인한다. 자연 만료 전이라면 키는 남아 있고 TTL은 경과한 만큼 줄어든다.

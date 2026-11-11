@@ -48,8 +48,13 @@ public class ProductController {
             실시간 목록이므로 탐색 도중 상품 추가, 삭제와 인기 점수 변경은 결과 순서에 영향을 줄 수 있습니다.
             LATEST와 POPULARITY 모두 동점이면 상품 ID 내림차순입니다.
             검색어는 소문자 공백 토큰을 AND 결합하고 한 글자 토큰은 제외합니다.
-            PostgreSQL은 리터럴 부분 문자열, Elasticsearch는 이름의 분석된 토큰을 조회합니다.
-            브랜드, 성별, 색상은 앞뒤 공백을 제거한 뒤 대소문자를 구분해 비교합니다.
+            PostgreSQL은 리터럴 부분 문자열을 조회합니다.
+            Elasticsearch는 상품명과 등록된 한글/영문 브랜드, 색상, 성별, 카테고리, 품목 별칭을 조회합니다.
+            New Balance 같은 등록된 구절은 하나의 조건으로 처리합니다.
+            별칭이 아닌 6자 이상 영문 단어는 앞 두 글자를 유지한 한 글자 오타를 허용합니다.
+            숫자를 포함한 모델/컬렉션 코드와 짧은 단어에는 오타 확장을 적용하지 않습니다.
+            별칭과 오타 검색에도 LATEST/POPULARITY 정렬 및 명시적 필터가 적용됩니다.
+            명시적인 brand, gender, color 필터는 앞뒤 공백을 제거한 뒤 대소문자를 구분해 비교합니다.
             """)
     public ApiResponse<ProductPageResponse> list(
             @RequestParam(required = false) String keyword,

@@ -17,7 +17,8 @@ import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
 public record ProductCursor(long id, OffsetDateTime createdAt, Integer popularityScore) {
     public static final int MAX_LENGTH = 512;
     public static final String POSTGRES = "postgres";
-    public static final String ELASTICSEARCH = "elasticsearch";
+    // Reject old ES cursors rather than continuing with a different keyword match set after deployment.
+    public static final String ELASTICSEARCH = "elasticsearch:keywords-v2";
 
     public static String encode(ProductListQuery query, ProductSummaryResponse last, String scope) {
         String position = "POPULARITY".equals(query.sortBy()) ? Integer.toString(last.popularityScore())

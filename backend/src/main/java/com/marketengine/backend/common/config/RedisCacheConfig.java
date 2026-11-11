@@ -26,8 +26,8 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 @ConditionalOnProperty(prefix = "marketengine.cache.redis", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class RedisCacheConfig {
 
-    // v5 includes query-bound continuation cursors alongside availability and the absolute expiry.
-    public static final String PRODUCT_LIST_FEED = "productListFeed:v5";
+    // v6 separates results produced by the catalogue vocabulary/typo search contract.
+    public static final String PRODUCT_LIST_FEED = "productListFeed:v6";
 
     @Bean
     FeedRedisStore productFeedRedisStore(RedisConnectionFactory connectionFactory, MeterRegistry meters,

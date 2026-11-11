@@ -22,7 +22,6 @@ import com.marketengine.backend.product.application.ProductListSearcher;
 import com.marketengine.backend.product.domain.ProductCategory;
 import com.marketengine.backend.product.domain.ProductCursor;
 import com.marketengine.backend.product.domain.ProductListQuery;
-import com.marketengine.backend.product.domain.ProductSearchKeywords;
 
 import co.elastic.clients.elasticsearch._types.SortOptions;
 import co.elastic.clients.elasticsearch._types.SortOrder;
@@ -31,7 +30,7 @@ import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Step 5: list/search via Elasticsearch (match AND on name tokens, keyword filters, slice paging).
+ * Catalogue search with query-time vocabulary, bounded typo tolerance, filters and stable field sorting.
  */
 @Component
 @RequiredArgsConstructor
@@ -86,7 +85,7 @@ public class ElasticsearchProductListSearcher implements ProductListSearcher {
     private static Query buildQuery(ProductListQuery search) {
         BoolQuery.Builder bool = ProductDocument.visibleProducts();
 
-        appendKeywordMust(bool, search.keyword());
+        ProductKeywordQuery.appendTo(bool, search.keyword());
 
         if (search.category() != null) {
             bool.filter(filterTerm("category", search.category().name()));
@@ -108,12 +107,6 @@ public class ElasticsearchProductListSearcher implements ProductListSearcher {
         }
 
         return Query.of(query -> query.bool(bool.build()));
-    }
-
-    private static void appendKeywordMust(BoolQuery.Builder bool, String keyword) {
-        for (String token : ProductSearchKeywords.tokens(keyword)) {
-            bool.must(must -> must.match(match -> match.field("name").query(token)));
-        }
     }
 
     private static Query filterTerm(String field, String value) {

@@ -4,6 +4,8 @@ Java 21과 Spring Boot 기반의 단일 SKU 주문 및 상품 검색 포트폴�
 
 [포트폴리오 읽기](docs/PORTFOLIO.md) / [제출용 PDF](output/pdf/market-engine-portfolio.pdf)
 
+ES 검색은 `나이키 검정 후드`, `뉴발란스 러닝화` 같은 카탈로그 별칭과 긴 영문 단어의 제한적인 오타를 처리한다. [검색 규칙과 품질 평가 실행 방법](docs/K6_SCENARIOS.md#검색-품질-회귀-평가)
+
 ## 구현과 측정 결과
 
 - **주문과 재고.** 주문 생성은 회원과 멱등성 키를 확인한 뒤 같은 트랜잭션에서 재고를 조건부 차감하고 단가를 받아 주문을 저장한다. 검색용 Outbox는 품절과 재입고 전환에서 기록한다. 수량 수정은 점유량 차이만 반영하고 취소는 한 번만 재고를 복원한다. 최초 요청 수량을 보존해 수정 또는 취소 후에도 동일한 POST를 재시도할 수 있다. 주문 락 대기는 기본 500ms로 제한한다. [주문 실행](backend/src/main/java/com/marketengine/backend/order/application/OrderCreateExecutor.java)
