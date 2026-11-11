@@ -18,10 +18,10 @@ Invoke-RestMethod 'http://localhost:9200/products/_count' -Method Post -ContentT
 k6 run -e CASE=pagination scripts/k6/search_scenarios.js
 ```
 
-- **페이지 경계 (`pagination`).** `StudioCapsule`을 최신순과 인기순으로 각각 조회한다. 상품 13개가 첫 페이지 12개와 다음 페이지 1개로 나뉘고 두 페이지에서 ID 1~13이 정확히 한 번씩 나와야 한다. PG와 ES 모두 `page × size`에서 시작해 최대 `size + 1`개를 읽는다. 한 건 더 읽은 결과로 다음 페이지 유무를 판단한다.
+- **페이지 경계 (`pagination`).** `StudioCapsule`을 최신순과 인기순으로 각각 조회한다. 상품 13개가 첫 페이지 12개와 커서 다음 페이지 1개로 나뉘고 두 페이지에서 ID 1~13이 정확히 한 번씩 나와야 한다. 최대 `size + 1`개를 읽어 다음 페이지 유무를 판단한다.
 - **인기 피드 (`feed`).** 짧은 간격으로 같은 홈과 카테고리 목록을 요청한다. 캐시 ON/OFF 두 실행에 같은 입력과 도착률을 사용해 Redis가 ES 호출을 얼마나 줄이는지 본다.
 - **검색어별 결과 (`discovery`).** 넓게 매칭되는 검색어, 존재하는 모델 코드, 의도적으로 없는 코드를 구분한다. 응답 시간은 검색 종류별로 비교한다. 결과가 드문 키워드도 같은 페이지를 다시 요청하면 캐시에 적중할 수 있다.
-- **연속 탐색 (`browse`).** 한 사용자가 같은 조건에서 다음 페이지로 이동한다. 응답의 `hasNext`가 거짓이면 중단한다. `page=0..2`와 `page>=3`의 지연을 나눠 본다. 기본 크기 12에서 3페이지부터는 애플리케이션의 피드 캐시를 우회한다.
+- **연속 탐색 (`browse`).** 한 사용자가 같은 조건에서 응답의 `nextCursor`를 다음 요청의 `after`로 전달한다. `hasNext`가 거짓이면 중단한다. 처음, 1~2회 추가 탐색, 3회 이상 추가 탐색의 지연을 나눠 본다. 커서 요청은 모두 캐시를 우회한다. RATE는 세션/초이며 HTTP 요청/초와 다르다.
 
 PG의 상품명 검색은 대소문자를 정규화한 부분 문자열, ES는 분석한 토큰을 사용한다. 최신순에서 PostgreSQL은 원본 시각, 기존 ES `date` 매핑은 밀리초로 정렬하고 각 저장소에서 동점이면 ID가 큰 상품이 먼저다. 생성 시각이 같은 밀리초 안에서만 다른 상품은 양쪽의 상대 순서가 달라질 수 있다. 페이지 경계 실험은 고정된 카탈로그와 한 저장소에서 이어지는 페이지를 사용한다.
 
@@ -57,10 +57,10 @@ k6 run -e CASE=feed scripts/k6/search_scenarios.js
 
 각 측정 직전과 직후에 아래 카운터를 읽고 차이를 기록한다. Redis 수치는 인스턴스 전체, ES의 `query_total`은 샤드 단위 누적값이다. 같은 환경에 다른 트래픽이 섞이면 수치 차이를 이 실험에만 귀속할 수 없다. 캐시를 우회하는 요청은 Redis 미적중 카운터에도 들어가지 않는다.
 
-현재 피드 키의 TTL은 기본 30~60초다. 예열한 키도 측정 도중 만료될 수 있으므로 결과에 TTL 설정을 함께 기록한다. 캐시를 켠 실험 DB에서 필터 없이 최신순 첫 페이지(`page=0`, `size=12`)를 조회한 직후 아래 한 줄로 남은 시간을 밀리초 단위로 확인한다.
+현재 Redis 피드 키의 TTL은 기본 30~60초이고 Caffeine은 최대 2초다. Caffeine은 Redis의 절대 만료 시각을 넘기지 않는다. 캐시 ON/OFF 설정은 두 계층 모두에 적용된다. 예열한 키도 측정 도중 만료될 수 있으므로 결과에 TTL 설정을 함께 기록한다. 캐시를 켠 실험 DB에서 필터 없이 최신순 첫 페이지(`page=0`, `size=12`)를 조회한 직후 아래 한 줄로 남은 시간을 밀리초 단위로 확인한다.
 
 ```powershell
-docker compose exec -T redis redis-cli PTTL 'productListFeed:v3:elasticsearch::feed:q2?cat=&brand=&gender=&color=&min=&max=&kw=&sort=LATEST&page=0&size=12'
+docker compose exec -T redis redis-cli PTTL 'productListFeed:v5:elasticsearch::feed:q2?cat=&brand=&gender=&color=&min=&max=&kw=&sort=LATEST&page=0&size=12'
 ```
 
 상품 수정의 영향을 확인하려면, 양수인 키의 TTL을 기록하고 다른 상품 하나를 수정한 직후 피드를 다시 조회하기 전에 같은 키를 확인한다. 자연 만료 전이라면 키는 남아 있고 TTL은 경과한 만큼 줄어든다.
@@ -241,6 +241,24 @@ k6 run -e CASE=control scripts/k6/order_scenarios.js
 기본 지속 시간은 10초다. `NORMAL_RPS`, `EXTRA_RPS`, `SECONDS`로 조절한다. 처음에는 주문이 정상 생성되는지 확인하고, 비교 표본이 충분해지도록 실행 시간을 늘리되 인기 SKU의 가용 재고도 함께 확인한다. 세 조건 모두 콘솔의 `order_probe_duration`이 일반 주문 흐름의 p95/p99를 보여준다. `orders_stockout`은 재고 부족, `orders_key_conflict`는 멱등 키 충돌이다. 품절이 발생한 실행은 오류 코드별 건수를 남기고 성공 주문의 경합 실험과 구분한다. [주문 부하 스크립트](../scripts/k6/order_scenarios.js)
 
 ## 결과를 해석하는 순서
+
+상품 커서는 동일 필터, 정렬, 크기와 검색 백엔드에만 유효하다. `after`를 보낼 때 page는 생략하거나 0으로 둔다. 커서 응답의 page는 0이며 실제 탐색 깊이는 호출자가 관리한다. ES는 `search_after`, PG는 정렬값과 ID를 비교한다. PIT 스냅샷을 유지하지 않는 실시간 탐색이므로 탐색 도중 상품의 정렬값이 변경되면 앞뒤 위치도 달라질 수 있다.
+
+짧은 검수는 `scripts/verify/run-commerce-smoke.ps1 -K6 -Browser`로 별도 1,000건 환경에서 실행할 수 있다. 피드 캐시 ON/OFF, Redis와 ES 장애, 마지막 재고와 재입고, k6의 3초 feed/browse 및 페이지 경계, 실제 브라우저를 확인한다. `-UseLocalJar`는 미리 생성한 bootJar를 사용한다. 이 검수는 최대 처리량 측정이 아니다.
+
+검수 종료 시 실행별 라벨을 확인한 컨테이너만 중지한다. 컨테이너와 볼륨을 자동 삭제하지 않으므로 반복 실행하면 검수 데이터가 남는다. 2026-11-11 이전 정리 코드에서 기존 1,000만 건 볼륨이 삭제된 사고와 미복구 상태는 [사고 기록](VERIFICATION_INCIDENT_2026-11-11.md)에 남겼다. 아래 기존 프로젝트 대상 명령은 해당 환경이 준비된 경우에 사용한다.
+
+실제 환경의 SQL 누적 시간과 WAL, HOT/dead tuple, Redis 메모리, ES GC/큐와 백엔드 지표는 아래 한 줄로 파일에 저장한다. SQL 원문은 저장하지 않는다. 전후 스냅샷의 차이와 동일 시나리오의 p95/p99를 함께 본다.
+
+```powershell
+& .\scripts\verify\write-performance-snapshot.ps1 -Project marketengine-catalog-10m
+```
+
+빠른 sweep에서 발견한 구간만 유지해서 확인하려면 `-HoldSeconds 90`을 추가한다. 기존 기본값은 유지하고, 실행 기록에는 커밋, 미커밋 변경 여부, k6 이미지와 Compose 프로젝트도 남긴다. 생성기에서 VU를 늘리는 비용을 배제하려면 필요한 VU를 미리 할당한 뒤 도착률을 올린다. feed는 전체 최신순, TOP 최신순, 전체 인기순 세 URL이므로 결과는 인기 피드 전달 성능으로 해석한다.
+
+```powershell
+& .\scripts\k6\run-feed-capacity.ps1 -Sweep -TargetRps 15000 -RampSeconds 60 -HoldSeconds 90 -InitialVUs 2000 -MaxVUs 2000
+```
 
 매 실행에 코드 버전, DB 또는 색인 규모, 시작 재고나 캐시 예열 상태, 목표 도착률, 실제 완료 요청 수, `dropped_iterations`, p95/p99, 오류 코드별 건수를 함께 기록한다. 짧은 기본 실행의 p99는 표본 수와 함께 읽는다.
 

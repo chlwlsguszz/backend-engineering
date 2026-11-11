@@ -1,6 +1,11 @@
 # Start a separate Docker network, database and index for outage and cache verification.
 [CmdletBinding()]
-param()
+param(
+    [switch] $UseLocalJar,
+    [string] $RuntimeImage = 'eclipse-temurin:21-jre',
+    [switch] $Browser,
+    [switch] $K6
+)
 
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
@@ -8,6 +13,11 @@ $project = 'commerce-smoke-' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
 $composeArgs = @('compose', '-p', $project, '-f', (Join-Path $repo 'docker-compose.yml'),
     '-f', (Join-Path $PSScriptRoot 'compose.smoke.yml'))
 $oldCache = $env:MARKETENGINE_CACHE_REDIS_ENABLED
+$oldJar = $env:BACKEND_TEST_JAR
+$oldImage = $env:BACKEND_TEST_IMAGE
+$oldOrigin = $env:BACKEND_ORIGIN
+$oldSmokeToken = $env:SMOKE_RUN_TOKEN
+$oldComposeProject = $env:COMPOSE_PROJECT_NAME
 
 function Invoke-Compose([string[]] $CliArgs) {
     $ErrorActionPreference = 'Continue'
@@ -68,7 +78,26 @@ function Read-Catalog([bool] $CacheEnabled) {
 function Get-SearchCount {
     (Invoke-RestMethod "$es/products/_stats/search")._all.total.search.query_total
 }
+function Invoke-Frontend([string] $Task) {
+    Push-Location (Join-Path $repo 'frontend')
+    try {
+        $ErrorActionPreference = 'Continue'
+        $PSNativeCommandUseErrorActionPreference = $false
+        & npm.cmd run $Task 2>&1 | ForEach-Object { $_.ToString() }
+        if ($LASTEXITCODE -ne 0) { throw "Frontend $Task failed" }
+    } finally { Pop-Location }
+}
 try {
+    $env:SMOKE_RUN_TOKEN = $project
+    $env:COMPOSE_PROJECT_NAME = $project
+    if ($UseLocalJar) {
+        $jars = @(Get-ChildItem -LiteralPath (Join-Path $repo 'backend/build/libs') -Filter '*.jar' |
+            Where-Object { $_.Name -notlike '*-plain.jar' })
+        if ($jars.Count -ne 1) { throw 'Build exactly one backend bootJar before using -UseLocalJar.' }
+        $env:BACKEND_TEST_JAR = $jars[0].FullName
+        $env:BACKEND_TEST_IMAGE = $RuntimeImage
+        $composeArgs += @('-f', (Join-Path $PSScriptRoot 'compose.local-jar.yml'))
+    }
     $env:MARKETENGINE_CACHE_REDIS_ENABLED = 'true'
     Invoke-Compose @('up','-d','--build','--wait','backend')
     $api = Get-Endpoint backend 8080
@@ -122,12 +151,42 @@ try {
     Wait-For 'backend without feed cache' { (Invoke-RestMethod "$api/actuator/health").status -eq 'UP' }
     Write-Host 'Redis OFF'
     Read-Catalog $false
+    # Validate the optional PG indexes on this disposable 1,000-product database.
+    $ErrorActionPreference = 'Continue'
+    Get-Content -Raw -LiteralPath (Join-Path $repo 'scripts/sql/enable-postgres-search-indexes.sql') |
+        & docker @composeArgs exec -T postgres psql -U marketengine -d marketengine -v ON_ERROR_STOP=1
+    $indexExit = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($indexExit -ne 0) { throw 'Optional PostgreSQL search index verification failed' }
+    if ($K6) {
+        foreach ($case in @('pagination','feed','browse')) {
+            $ErrorActionPreference = 'Continue'
+            & docker run --rm --network "${project}_default" -v "${repo}/scripts/k6:/scripts:ro" grafana/k6:0.58.0 run --quiet `
+                -e BASE_URL=http://backend:8080 -e "CASE=$case" -e RATE=5 -e DURATION=3s -e MAX_PAGE=3 /scripts/search_scenarios.js
+            $k6Exit = $LASTEXITCODE
+            $ErrorActionPreference = 'Stop'
+            if ($k6Exit -ne 0) { throw "k6 $case smoke failed ($k6Exit)" }
+        }
+    }
+    if ($Browser) {
+        $env:BACKEND_ORIGIN = $api
+        Invoke-Frontend build
+        Invoke-Frontend 'test:e2e'
+    }
+    & (Join-Path $PSScriptRoot 'write-performance-snapshot.ps1') -Project $project
     Write-Host 'Commerce smoke passed.'
 } catch {
     Invoke-Compose @('logs','--tail','30','backend')
     throw
 } finally {
-    $env:MARKETENGINE_CACHE_REDIS_ENABLED = $oldCache
-    # $project is generated above, including its volumes and network.
-    Invoke-Compose @('down','-v','--rmi','local','--remove-orphans')
+    try {
+        & (Join-Path $PSScriptRoot 'stop-verification-containers.ps1') -Project $project
+    } finally {
+        $env:MARKETENGINE_CACHE_REDIS_ENABLED = $oldCache
+        $env:BACKEND_TEST_JAR = $oldJar
+        $env:BACKEND_TEST_IMAGE = $oldImage
+        $env:BACKEND_ORIGIN = $oldOrigin
+        $env:SMOKE_RUN_TOKEN = $oldSmokeToken
+        $env:COMPOSE_PROJECT_NAME = $oldComposeProject
+    }
 }

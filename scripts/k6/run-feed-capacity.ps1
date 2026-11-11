@@ -24,10 +24,16 @@ param(
     [ValidateSet('Host', 'Direct')]
     [string] $Route = 'Host',
     [ValidateRange(0, 1800)]
-    [int] $RampSeconds = 0
+    [int] $RampSeconds = 0,
+    [Parameter(ParameterSetName = 'Sweep')]
+    [ValidateRange(-1, 600)]
+    [int] $HoldSeconds = -1,
+    [ValidatePattern('^[a-z0-9][a-z0-9_-]*$')]
+    [string] $ComposeProject = 'marketengine-catalog-10m'
 )
 
 $ErrorActionPreference = 'Stop'
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 if ($Sweep) {
     if (-not $PSBoundParameters.ContainsKey('RampSeconds')) {
         $RampSeconds = if ($TargetRps -gt 10000) { 60 } else { 200 }
@@ -52,7 +58,7 @@ $baseUrl = 'http://host.docker.internal:8080'
 $networkArgs = @()
 if ($Route -eq 'Direct') {
     # Use the backend service alias on the 10M catalog's dedicated Compose network.
-    $networkArgs = @('--network', 'marketengine-catalog-10m_default')
+    $networkArgs = @('--network', "${ComposeProject}_default")
     $baseUrl = 'http://backend:8080'
 }
 
@@ -90,7 +96,7 @@ Write-Host 'Warming up: 50 RPS for 10s'
 Invoke-K6Stage -Name 'warmup' -Arguments @('-e', 'FEED_WARMUP=1', '-e', 'RATE=50', '-e', 'DURATION=10s', '/scripts/search_scenarios.js')
 
 if ($Sweep) {
-    $holdSeconds = if ($TargetRps -gt 10000) { 0 } else { 30 }
+    $holdSeconds = if ($HoldSeconds -ge 0) { $HoldSeconds } elseif ($TargetRps -gt 10000) { 0 } else { 30 }
     $rampMs = $RampSeconds * 1000
     # Both k6 and the report read these same time/rate endpoints from settings.json.
     $rampStages = @(
@@ -104,6 +110,9 @@ if ($Sweep) {
         RampSeconds = $RampSeconds; RampStages = $rampStages; HoldSeconds = $holdSeconds
         InitialVUs = $InitialVUs; MaxVUs = $MaxVUs
         P99LimitMs = 200; FailureLimitPct = 0.1
+        Commit = (& git -C $repoRoot rev-parse HEAD)
+        Dirty = ([bool](& git -C $repoRoot status --porcelain))
+        K6Image = 'grafana/k6:0.58.0'; ComposeProject = $ComposeProject
     }
     $settings | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $results 'settings.json') -Encoding UTF8
     $endpoints = $rampStages | ForEach-Object { "$($_.TargetRps) RPS at $($_.EndMs / 1000)s" }
