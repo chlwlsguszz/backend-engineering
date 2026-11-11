@@ -1,75 +1,58 @@
 package com.marketengine.backend.common.config;
 
+import java.time.Clock;
 import java.time.Duration;
-import java.util.concurrent.ThreadLocalRandom;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.marketengine.backend.product.infrastructure.cache.FeedCacheEntry;
+import com.marketengine.backend.product.infrastructure.cache.FeedRedisStore;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Profile;
-import org.springframework.cache.CacheManager;
-import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.data.redis.cache.RedisCacheConfiguration;
-import org.springframework.data.redis.cache.RedisCacheManager;
-import org.springframework.data.redis.cache.RedisCacheWriter;
+import org.springframework.context.annotation.Profile;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
-import org.springframework.data.redis.serializer.RedisSerializationContext;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
 
-import com.marketengine.backend.product.api.ProductDtos.ProductPageResponse;
-
-@Configuration
-@EnableCaching
+@Configuration(proxyBeanMethods = false)
 @Profile("!reindex")
 @ConditionalOnProperty(prefix = "marketengine.cache.redis", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class RedisCacheConfig {
 
-    public static final String PRODUCT_LIST_FEED = "productListFeed:v3";
+    // v4 stores an absolute expiry alongside the response, unlike the earlier bare JSON response.
+    public static final String PRODUCT_LIST_FEED = "productListFeed:v4";
 
     @Bean
-    RedisCacheConfiguration productListFeedCacheConfiguration(
-            @Value("${marketengine.cache.redis.product-list-feed-ttl:60s}") Duration maxTtl
-    ) {
-        ObjectMapper objectMapper = new ObjectMapper()
-                .registerModule(new JavaTimeModule())
+    FeedRedisStore productFeedRedisStore(RedisConnectionFactory connectionFactory, MeterRegistry meters,
+            @Value("${marketengine.search.backend:elasticsearch}") String searchBackend,
+            @Value("${marketengine.cache.redis.breaker-failure-count:5}") int failureCount,
+            @Value("${marketengine.cache.redis.breaker-open-duration:5s}") Duration openDuration) {
+        ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-
-        Jackson2JsonRedisSerializer<ProductPageResponse> valueSerializer =
-                new Jackson2JsonRedisSerializer<>(objectMapper, ProductPageResponse.class);
-
-        return RedisCacheConfiguration.defaultCacheConfig()
-                .entryTtl(jitteredTtl(maxTtl))
-                .disableCachingNullValues()
-                .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(
-                        valueSerializer
-                ));
+        var template = new RedisTemplate<String, FeedCacheEntry>();
+        template.setConnectionFactory(connectionFactory);
+        template.setKeySerializer(StringRedisSerializer.UTF_8);
+        template.setValueSerializer(new Jackson2JsonRedisSerializer<>(mapper, FeedCacheEntry.class));
+        template.afterPropertiesSet();
+        return new FeedRedisStore(template, redisCircuitBreaker(failureCount, openDuration), meters,
+                Clock.systemUTC(), PRODUCT_LIST_FEED + ":" + searchBackend + "::");
     }
 
-    private static RedisCacheWriter.TtlFunction jitteredTtl(Duration maxTtl) {
-        long maxMillis = maxTtl.toMillis();
-        if (maxMillis < 1) {
-            throw new IllegalArgumentException("product-list-feed-ttl must be at least 1 ms");
+    public static CircuitBreaker redisCircuitBreaker(int failureCount, Duration openDuration) {
+        if (failureCount < 1 || openDuration.isZero() || openDuration.isNegative()) {
+            throw new IllegalArgumentException("Redis breaker failure count and open duration must be positive");
         }
-        // Draw on each cache write. Every entry lives between half the cap (rounded up) and the cap.
-        long jitterBound = maxMillis / 2 + 1;
-        return (key, value) -> Duration.ofMillis(maxMillis - ThreadLocalRandom.current().nextLong(jitterBound));
-    }
-
-    @Bean
-    CacheManager cacheManager(
-            RedisConnectionFactory connectionFactory,
-            RedisCacheConfiguration productListFeedCacheConfiguration,
-            @Value("${marketengine.search.backend:elasticsearch}") String searchBackend
-    ) {
-        var config = productListFeedCacheConfiguration.computePrefixWith(name -> name + ":" + searchBackend + "::");
-        return RedisCacheManager.builder(connectionFactory)
-                .enableStatistics()
-                .cacheDefaults(config)
-                .withCacheConfiguration(PRODUCT_LIST_FEED, config)
-                .build();
+        return CircuitBreaker.of("productFeedRedis", CircuitBreakerConfig.custom()
+                .slidingWindowSize(failureCount).minimumNumberOfCalls(failureCount)
+                .failureRateThreshold(100).waitDurationInOpenState(openDuration)
+                .permittedNumberOfCallsInHalfOpenState(1)
+                .ignoreException(failure -> !FeedRedisStore.isUnavailable(failure)).build());
     }
 }

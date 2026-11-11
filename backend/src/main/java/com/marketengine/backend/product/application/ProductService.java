@@ -55,7 +55,7 @@ public class ProductService {
     public ProductPageResponse list(ProductListQuery query) {
         return ProductListFeedKeyResolver.resolve(query)
                 .map(productListFeedCache::get)
-                .orElseGet(() -> ProductPageResponse.from(productListSearcher.search(query)));
+                .orElseGet(() -> productListFeedCache.loadUncached(query));
     }
 
     @Transactional
