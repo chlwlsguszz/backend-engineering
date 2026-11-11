@@ -8,6 +8,8 @@ import org.springframework.data.domain.Slice;
 
 import com.marketengine.backend.product.domain.Product;
 import com.marketengine.backend.product.domain.ProductCategory;
+import com.marketengine.backend.product.domain.ProductCursor;
+import com.marketengine.backend.product.domain.ProductListQuery;
 
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -117,8 +119,21 @@ public final class ProductDtos {
             List<ProductSummaryResponse> items,
             int page,
             int size,
-            boolean hasNext
+            boolean hasNext,
+            String nextCursor
     ) {
+        public ProductPageResponse(List<ProductSummaryResponse> items, int page, int size, boolean hasNext) {
+            this(items, page, size, hasNext, null);
+        }
+
+        public static ProductPageResponse from(Slice<ProductSummaryResponse> result,
+                                               ProductListQuery query, String scope) {
+            String next = result.hasNext() && !result.isEmpty()
+                    ? ProductCursor.encode(query, result.getContent().getLast(), scope) : null;
+            return new ProductPageResponse(result.getContent(), result.getNumber(), result.getSize(),
+                    result.hasNext(), next);
+        }
+
         public static ProductPageResponse from(Slice<ProductSummaryResponse> pageResult) {
             return new ProductPageResponse(
                     pageResult.getContent(),

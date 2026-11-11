@@ -36,12 +36,14 @@ export async function fetchProductPage(
   page: number,
   filters: ProductFilterState,
   signal?: AbortSignal,
+  after?: string | null,
 ): Promise<ApiResult<ProductPageResponse>> {
   const params = new URLSearchParams({
-    page: String(page),
     size: String(PAGE_SIZE),
     sortBy: filters.sortBy,
   });
+  if (after) params.set("after", after);
+  else params.set("page", String(page));
 
   if (filters.keyword.trim() !== "") params.set("keyword", filters.keyword.trim());
   if (filters.category !== "ALL") params.set("category", filters.category);

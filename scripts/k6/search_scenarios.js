@@ -143,8 +143,9 @@ for (const group of latencyGroups[CASE] || []) {
   groupDurations[group] = new Trend(`search_${group}_duration`, true);
 }
 
-function readPage(filters, page, traffic) {
-  const query = Object.entries({ sortBy: "LATEST", ...filters, size: PAGE_SIZE, page })
+function readPage(filters, page, traffic, after = null) {
+  const paging = after ? { after } : { page };
+  const query = Object.entries({ sortBy: "LATEST", ...filters, size: PAGE_SIZE, ...paging })
     .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
     .join("&");
   const depth = page === 0 ? "first" : page <= 2 ? "page_1_2" : "page_3_plus";
@@ -164,9 +165,10 @@ function readPage(filters, page, traffic) {
   const data = body && body.data;
   const valid = check(data, {
     "valid product slice": (d) =>
-      body && body.success === true && d && d.page === page && d.size === PAGE_SIZE &&
+      body && body.success === true && d && d.page === (after ? 0 : page) && d.size === PAGE_SIZE &&
       typeof d.hasNext === "boolean" && Array.isArray(d.items) && d.items.length <= PAGE_SIZE &&
-      d.items.every((p) => p && Number.isSafeInteger(p.id) && p.id > 0),
+      d.items.every((p) => p && Number.isSafeInteger(p.id) && p.id > 0 && typeof p.available === "boolean") &&
+      (d.hasNext ? typeof d.nextCursor === "string" && d.nextCursor.length > 0 : d.nextCursor === null),
   }, tags);
   return valid ? data : null;
 }
@@ -260,11 +262,13 @@ export function browse() {
   const index = exec.scenario.iterationInTest;
   const lastPage = [0, 0, 1, 1, 2, MAX_PAGE][index % 6];
   const filters = Math.floor(index / 6) % 2 === 0 ? { category: "TOP" } : { keyword: "Nike" };
+  let after = null;
   for (let page = 0; page <= lastPage; page++) {
-    const data = readPage(filters, page, "browse");
+    const data = readPage(filters, page, "browse", after);
     if (!data) return;
     if (!check(data, { "browse page has results": (d) => d.items.length > 0 })) return;
     if (!data.hasNext || page === lastPage) return;
+    after = data.nextCursor;
     sleep(0.5);
   }
 }
@@ -276,7 +280,7 @@ export function pagination() {
     if (!first || !check(first, {
       "capsule first page has 12 and a next page": (d) => d.items.length === 12 && d.hasNext,
     }, { sort: sortBy })) continue;
-    const last = readPage(filters, 1, "capsule");
+    const last = readPage(filters, 1, "capsule", first.nextCursor);
     if (!last) continue;
     const ids = new Set([...first.items, ...last.items].map((p) => p.id));
     check(last, {

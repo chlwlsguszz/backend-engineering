@@ -20,6 +20,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
 import com.marketengine.backend.product.application.ProductListSearcher;
 import com.marketengine.backend.product.domain.ProductCategory;
+import com.marketengine.backend.product.domain.ProductCursor;
 import com.marketengine.backend.product.domain.ProductListQuery;
 import com.marketengine.backend.product.domain.ProductSearchKeywords;
 
@@ -41,13 +42,23 @@ public class ElasticsearchProductListSearcher implements ProductListSearcher {
     private final JdbcTemplate jdbcTemplate;
 
     @Override
+    public String cursorScope() {
+        return ProductCursor.ELASTICSEARCH;
+    }
+
+    @Override
     public Slice<ProductSummaryResponse> search(ProductListQuery criteria) {
         Pageable pageable = criteria.pageable();
+        ProductCursor cursor = ProductCursor.decode(criteria, cursorScope());
         // Spring Data obtains ES "from" from Pageable and "size" from getRequestSize().
         // Increasing the page size itself shifts the start of every later page.
-        NativeQuery sliceQuery = new NativeQuery(NativeQuery.builder()
+        var builder = NativeQuery.builder()
                 .withQuery(buildQuery(criteria)).withSort(buildSort(criteria.sortBy()))
-                .withPageable(pageable).withTrackTotalHits(false)) {
+                .withPageable(pageable).withTrackTotalHits(false);
+        if (cursor != null) {
+            builder.withSearchAfter(cursor.elasticsearchSortValues());
+        }
+        NativeQuery sliceQuery = new NativeQuery(builder) {
             @Override
             public Integer getRequestSize() {
                 return criteria.fetchSize();

@@ -29,6 +29,7 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
     public Slice<ProductSummaryResponse> search(ProductListQuery query) {
         QProduct product = QProduct.product;
         Pageable pageable = query.pageable();
+        ProductCursor cursor = ProductCursor.decode(query, ProductCursor.POSTGRES);
 
         List<ProductSummaryResponse> rows = queryFactory
                 .select(Projections.constructor(ProductSummaryResponse.class,
@@ -39,6 +40,7 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
                 .from(product)
                 .where(
                         keywordContains(query.keyword()),
+                        before(cursor),
                         query.category() == null ? null : product.category.eq(query.category()),
                         query.brand() == null ? null : product.brand.eq(query.brand()),
                         query.gender() == null ? null : product.gender.eq(query.gender()),
@@ -57,6 +59,17 @@ public class ProductRepositoryImpl implements ProductQueryRepository {
         }
 
         return new SliceImpl<>(rows, pageable, hasNext);
+    }
+
+    private BooleanExpression before(ProductCursor cursor) {
+        if (cursor == null) return null;
+        QProduct product = QProduct.product;
+        if (cursor.popularityScore() != null) {
+            return product.popularityScore.lt(cursor.popularityScore())
+                    .or(product.popularityScore.eq(cursor.popularityScore()).and(product.id.lt(cursor.id())));
+        }
+        return product.createdAt.lt(cursor.createdAt())
+                .or(product.createdAt.eq(cursor.createdAt()).and(product.id.lt(cursor.id())));
     }
 
     private OrderSpecifier<?>[] orderSpecifiers(String sortBy) {

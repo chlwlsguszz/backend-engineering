@@ -75,6 +75,12 @@ class ProductListFeedKeyResolverTest {
         assertThat(resolve(null, null, null, null, null, null, null, "LATEST", page, size)).isEmpty();
     }
 
+    @Test
+    void cursorContinuationsNeverCollideWithFirstPageCache() {
+        var query = new ProductListQuery(null, null, null, null, null, null, null, "LATEST", 0, 12, "cursor");
+        assertThat(ProductListFeedKeyResolver.resolve(query)).isEmpty();
+    }
+
     @ParameterizedTest
     @CsvSource({"-1,12", "0,101", "0,0", "100,100", "2147483647,12"})
     void rejectsUnsupportedPageWindows(int page, int size) {

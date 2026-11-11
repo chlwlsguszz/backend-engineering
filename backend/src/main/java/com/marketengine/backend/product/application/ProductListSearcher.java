@@ -11,4 +11,7 @@ import com.marketengine.backend.product.domain.ProductListQuery;
 public interface ProductListSearcher {
 
     Slice<ProductSummaryResponse> search(ProductListQuery query);
+
+    /** Cursor positions are not interchangeable between token-search ES and substring-search PostgreSQL. */
+    String cursorScope();
 }

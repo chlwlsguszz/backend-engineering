@@ -26,8 +26,8 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 @ConditionalOnProperty(prefix = "marketengine.cache.redis", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class RedisCacheConfig {
 
-    // v4 stores an absolute expiry alongside the response, unlike the earlier bare JSON response.
-    public static final String PRODUCT_LIST_FEED = "productListFeed:v4";
+    // v5 includes query-bound continuation cursors alongside availability and the absolute expiry.
+    public static final String PRODUCT_LIST_FEED = "productListFeed:v5";
 
     @Bean
     FeedRedisStore productFeedRedisStore(RedisConnectionFactory connectionFactory, MeterRegistry meters,

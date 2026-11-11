@@ -43,6 +43,9 @@ public class ProductController {
     @GetMapping
     @Operation(summary = "상품 목록 검색", description = """
             page는 0부터 시작하며 size는 1~100, 시작 위치는 10,000 미만입니다.
+            응답의 nextCursor를 after로 보내면 offset 없이 다음 결과를 조회합니다. 이때 page는 생략하거나 0입니다.
+            커서는 같은 필터, 정렬, size와 검색 백엔드에서 사용해야 하며 마지막 응답의 nextCursor는 null입니다.
+            실시간 목록이므로 탐색 도중 상품 추가, 삭제와 인기 점수 변경은 결과 순서에 영향을 줄 수 있습니다.
             LATEST와 POPULARITY 모두 동점이면 상품 ID 내림차순입니다.
             검색어는 소문자 공백 토큰을 AND 결합하고 한 글자 토큰은 제외합니다.
             PostgreSQL은 리터럴 부분 문자열, Elasticsearch는 이름의 분석된 토큰을 조회합니다.
@@ -58,10 +61,11 @@ public class ProductController {
             @RequestParam(required = false) Integer maxPrice,
             @RequestParam(required = false) String sortBy,
             @RequestParam(required = false) Integer page,
-            @RequestParam(required = false) Integer size
+            @RequestParam(required = false) Integer size,
+            @RequestParam(required = false) String after
     ) {
         return ApiResponse.ok(productService.list(new ProductListQuery(keyword, category, brand, gender, color,
-                minPrice, maxPrice, sortBy, page == null ? 0 : page, size == null ? 12 : size)));
+                minPrice, maxPrice, sortBy, page == null ? 0 : page, size == null ? 12 : size, after)));
     }
 
     @PutMapping("/{productId}")

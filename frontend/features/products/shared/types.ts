@@ -31,6 +31,7 @@ export type ProductPageResponse = {
   page: number;
   size: number;
   hasNext: boolean;
+  nextCursor: string | null;
 };
 
 export type ProductFilterState = {

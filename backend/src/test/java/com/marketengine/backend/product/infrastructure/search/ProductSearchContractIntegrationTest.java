@@ -21,6 +21,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
+import com.marketengine.backend.product.api.ProductDtos.ProductPageResponse;
 import com.marketengine.backend.product.application.ProductListSearcher;
 import com.marketengine.backend.product.domain.ProductListQuery;
 
@@ -171,6 +172,35 @@ class ProductSearchContractIntegrationTest {
         var results = esSearch.search(query(null, null, "LATEST", 0)).getContent();
         assertThat(results).extracting(ProductSummaryResponse::id).containsExactly(3L, 2L, 1L);
         assertThat(results).extracting(ProductSummaryResponse::available).containsExactly(true, false, false);
+    }
+
+    @Test
+    void bothStoresContinueWithKeysetCursorsWithoutSkippingTies() {
+        jdbc.update("""
+                INSERT INTO products(id,name,price_amount,stock_quantity,popularity_score,created_at)
+                SELECT i, 'Cursor Shirt', 10, 3, i % 3,
+                       '2026-01-01'::timestamptz + (26-i) * interval '1 microsecond'
+                FROM generate_series(1,25) i
+                """);
+        reindexer.reindex(true);
+        for (ProductListSearcher store : List.of(pgSearch, esSearch)) {
+            for (String sort : List.of("LATEST", "POPULARITY")) {
+                var all = new ProductListQuery("cursor", null, null, null, null, null, null, sort, 0, 100);
+                List<Long> expected = store.search(all).getContent().stream().map(ProductSummaryResponse::id).toList();
+                List<Long> actual = new ArrayList<>();
+                String next = null;
+                int pages = 0;
+                do {
+                    var query = new ProductListQuery("cursor", null, null, null, null, null, null, sort, 0, 7, next);
+                    var result = ProductPageResponse.from(store.search(query), query, store.cursorScope());
+                    actual.addAll(result.items().stream().map(ProductSummaryResponse::id).toList());
+                    assertThat(result.hasNext()).isEqualTo(result.nextCursor() != null);
+                    next = result.nextCursor();
+                    assertThat(++pages).isLessThanOrEqualTo(4);
+                } while (next != null);
+                assertThat(actual).containsExactlyElementsOf(expected).doesNotHaveDuplicates();
+            }
+        }
     }
 
     private String refreshInterval() {

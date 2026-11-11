@@ -119,7 +119,7 @@ public class ProductListFeedCache {
                     ErrorCode.SEARCH_CAPACITY_EXCEEDED.defaultMessage(), Map.of("retryAfterMillis", 100));
         }
         try {
-            return originTime.record(() -> ProductPageResponse.from(origin.search(query)));
+            return originTime.record(() -> ProductPageResponse.from(origin.search(query), query, origin.cursorScope()));
         } catch (RuntimeException failure) {
             originFailures.increment();
             throw failure;

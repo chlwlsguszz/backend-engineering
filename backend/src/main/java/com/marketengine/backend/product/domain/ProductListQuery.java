@@ -10,11 +10,21 @@ import com.marketengine.backend.common.exception.ErrorCode;
 /** Validated search parameters shared by both read stores and the feed cache. */
 public record ProductListQuery(String keyword, ProductCategory category, String brand, String gender,
                                String color, Integer minPrice, Integer maxPrice, String sortBy,
-                               int page, int size) {
+                               int page, int size, String after) {
 
     private static final int RESULT_WINDOW = 10_000;
 
+    public ProductListQuery(String keyword, ProductCategory category, String brand, String gender,
+                            String color, Integer minPrice, Integer maxPrice, String sortBy, int page, int size) {
+        this(keyword, category, brand, gender, color, minPrice, maxPrice, sortBy, page, size, null);
+    }
+
     public ProductListQuery {
+        after = after == null || after.isBlank() ? null : after.trim();
+        if (after != null && (after.length() > ProductCursor.MAX_LENGTH || page != 0)) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST,
+                    "Use a cursor of at most 512 characters with page omitted or zero");
+        }
         if (page < 0 || size < 1 || size > 100 || (long) page * size >= RESULT_WINDOW) {
             throw new BusinessException(ErrorCode.INVALID_REQUEST,
                     "Use a nonnegative page, size 1..100, and an offset below 10000");
@@ -42,6 +52,6 @@ public record ProductListQuery(String keyword, ProductCategory category, String 
     }
 
     public int fetchSize() {
-        return Math.min(size + 1, RESULT_WINDOW - page * size);
+        return after == null ? Math.min(size + 1, RESULT_WINDOW - page * size) : size + 1;
     }
 }

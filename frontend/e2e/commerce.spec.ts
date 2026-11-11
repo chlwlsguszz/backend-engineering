@@ -89,7 +89,7 @@ test("an item withdrawn after opening the page refreshes its sale status", async
   await expect(page.getByText("DISCONTINUED", { exact: true })).toBeVisible();
 });
 
-test("newer filters win and a failed next page retries the same offset", async ({ page }) => {
+test("newer filters win and a failed next page retries the same cursor", async ({ page }) => {
   let unblockOld!: () => void;
   const oldHeld = new Promise<void>(resolve => { unblockOld = resolve; });
   let oldRequested!: () => void;
@@ -99,13 +99,14 @@ test("newer filters win and a failed next page retries the same offset", async (
   await page.route("**/backend/api/products?**", async route => {
     const params = new URL(route.request().url()).searchParams;
     const keyword = params.get("keyword") ?? "initial";
-    const pageNumber = params.get("page")!;
+    const cursor = params.get("after");
+    const pageNumber = cursor ? "1" : params.get("page")!;
     if (keyword === "slow") {
       oldRequested();
       await oldHeld;
     }
     if (keyword === "latest" && pageNumber !== "0") {
-      nextPages.push(pageNumber);
+      nextPages.push(cursor ?? "missing-cursor");
       if (!failedOnce) {
         failedOnce = true;
         await route.fulfill({ status: 503, json: { success: false, error: { message: "테스트 재시도" } } });
@@ -114,11 +115,12 @@ test("newer filters win and a failed next page retries the same offset", async (
     }
     const item = {
       id: Number(pageNumber) + 1, name: `${keyword}-p${pageNumber}`, priceAmount: 100,
-      stockQuantity: 5, category: "TOP", brand: "Test", color: "BLACK", gender: "UNISEX",
+      available: true, category: "TOP", brand: "Test", color: "BLACK", gender: "UNISEX",
       popularityScore: 1, createdAt: "2026-11-01T00:00:00Z",
     };
     await route.fulfill({ json: { success: true, data: {
-      items: [item], page: Number(pageNumber), size: 12, hasNext: pageNumber === "0",
+      items: [item], page: 0, size: 12, hasNext: pageNumber === "0",
+      nextCursor: pageNumber === "0" ? `${keyword}-cursor` : null,
     } } });
   });
   await page.goto("/");
@@ -137,5 +139,5 @@ test("newer filters win and a failed next page retries the same offset", async (
   await expect(page.getByRole("heading", { name: "latest-p1" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "latest-p0" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "slow-p0" })).toHaveCount(0);
-  expect(nextPages).toEqual(["1", "1"]);
+  expect(nextPages).toEqual(["latest-cursor", "latest-cursor"]);
 });

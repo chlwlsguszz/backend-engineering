@@ -27,6 +27,7 @@ import com.marketengine.backend.product.application.ProductListFeedCache;
 import com.marketengine.backend.product.application.ProductListFeedKeyResolver;
 import com.marketengine.backend.product.application.ProductListSearcher;
 import com.marketengine.backend.product.domain.ProductCategory;
+import com.marketengine.backend.product.domain.ProductCursor;
 import com.marketengine.backend.product.domain.ProductListQuery;
 import com.marketengine.backend.product.infrastructure.cache.FeedRedisStore;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -72,8 +73,10 @@ class ProductFeedRedisIntegrationTest {
         var key = ProductListFeedKeyResolver.resolve(query).orElseThrow();
         var item = new ProductSummaryResponse(8L, "M42", BigDecimal.TEN, true, ProductCategory.TOP,
                 "Brand", "BLACK", "UNISEX", 1, OffsetDateTime.parse("2026-01-01T00:00:00Z"));
-        when(origin.search(query)).thenReturn(new SliceImpl<>(List.of(item), query.pageable(), false));
+        when(origin.search(query)).thenReturn(new SliceImpl<>(List.of(item), query.pageable(), true));
+        when(origin.cursorScope()).thenReturn(ProductCursor.POSTGRES);
         var first = feed.get(key);
+        assertThat(first.nextCursor()).isNotBlank();
         var physicalKey = RedisCacheConfig.PRODUCT_LIST_FEED + ":postgres::" + key.value();
         assertThat(redisTemplate.getExpire(physicalKey, TimeUnit.MILLISECONDS)).isBetween(1L, 4000L);
         assertThat(feed.get(key)).isEqualTo(first);

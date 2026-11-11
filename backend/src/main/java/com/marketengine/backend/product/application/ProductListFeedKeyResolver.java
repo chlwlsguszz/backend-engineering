@@ -16,7 +16,7 @@ public final class ProductListFeedKeyResolver {
     }
 
     public static Optional<ProductListFeedKey> resolve(ProductListQuery query) {
-        if (query.size() != FEED_PAGE_SIZE || query.page() > MAX_CACHED_PAGE) {
+        if (query.after() != null || query.size() != FEED_PAGE_SIZE || query.page() > MAX_CACHED_PAGE) {
             return Optional.empty();
         }
         String key = "feed:q2?cat=" + Objects.toString(query.category(), "")

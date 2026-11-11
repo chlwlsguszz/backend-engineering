@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.marketengine.backend.product.api.ProductDtos.ProductSummaryResponse;
 import com.marketengine.backend.product.application.ProductListSearcher;
 import com.marketengine.backend.product.domain.ProductListQuery;
+import com.marketengine.backend.product.domain.ProductCursor;
 import com.marketengine.backend.product.domain.ProductRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,11 @@ import lombok.RequiredArgsConstructor;
 public class JpaProductListSearcher implements ProductListSearcher {
 
     private final ProductRepository productRepository;
+
+    @Override
+    public String cursorScope() {
+        return ProductCursor.POSTGRES;
+    }
 
     @Override
     @Transactional(readOnly = true)
