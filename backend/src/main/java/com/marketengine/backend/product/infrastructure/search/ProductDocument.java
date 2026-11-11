@@ -20,7 +20,7 @@ import lombok.NoArgsConstructor;
  */
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-@Document(indexName = ProductDocument.INDEX_NAME)
+@Document(indexName = ProductDocument.INDEX_NAME, createIndex = false)
 @Setting(replicas = 0)
 public class ProductDocument {
 

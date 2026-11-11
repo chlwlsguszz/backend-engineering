@@ -35,7 +35,7 @@ public class ProductBulkReindexer {
     private static final String COUNT_SQL = "SELECT COUNT(*) FROM products";
 
     private static final String BATCH_SQL = """
-            SELECT id, name, price_amount, stock_quantity, category, brand, color, gender,
+            SELECT id, name, price_amount, stock_quantity, status, category, brand, color, gender,
                    popularity_score, created_at
             FROM products
             WHERE id > ?
@@ -45,6 +45,7 @@ public class ProductBulkReindexer {
 
     private final JdbcTemplate jdbcTemplate;
     private final ElasticsearchOperations elasticsearchOperations;
+    private final ProductIndexManager indexManager;
 
     @Value("${marketengine.elasticsearch.reindex.batch-size:5000}")
     private int batchSize;
@@ -72,12 +73,17 @@ public class ProductBulkReindexer {
         checkInterrupted();
         if (recreateIndex) {
             recreateIndex();
+        } else if (!elasticsearchOperations.indexOps(ProductDocument.class).exists()) {
+            indexManager.create();
         }
 
         log.info("Starting product reindex: totalRows={}, batchSize={}, workers={}", totalRows, batchSize, workers);
 
         IndexCoordinates index = IndexCoordinates.of(ProductDocument.INDEX_NAME);
-        TransferStats stats = transfer(index, totalRows);
+        TransferStats stats;
+        try (var refresh = indexManager.suspendRefresh()) {
+            stats = transfer(index, totalRows);
+        }
         checkInterrupted();
         if (stats.indexed() != totalRows) {
             throw new IllegalStateException("Source count changed during reindex: expected "
@@ -113,7 +119,7 @@ public class ProductBulkReindexer {
                 WITH bounds AS (SELECT min(id) AS lo, max(id) AS hi FROM products)
                 SELECT DISTINCT p.* FROM bounds CROSS JOIN generate_series(0, 4) AS g(i)
                 CROSS JOIN LATERAL (
-                    SELECT id, name, price_amount, stock_quantity, category, brand, color, gender,
+                    SELECT id, name, price_amount, stock_quantity, status, category, brand, color, gender,
                            popularity_score, created_at
                     FROM products WHERE id >= bounds.lo + floor((bounds.hi - bounds.lo)::numeric * g.i / 4)::bigint
                     ORDER BY id LIMIT 1
@@ -218,9 +224,7 @@ public class ProductBulkReindexer {
             indexOperations.delete();
             log.info("Deleted Elasticsearch index: {}", ProductDocument.INDEX_NAME);
         }
-        if (!indexOperations.createWithMapping()) {
-            throw new IllegalStateException("Index creation was not acknowledged: " + ProductDocument.INDEX_NAME);
-        }
+        indexManager.create();
         log.info("Created Elasticsearch index: {}", ProductDocument.INDEX_NAME);
     }
 

@@ -21,15 +21,19 @@ import lombok.extern.slf4j.Slf4j;
 public class ProductIndexInitializer implements ApplicationListener<ApplicationReadyEvent> {
 
     private final ElasticsearchOperations elasticsearchOperations;
+    private final ProductIndexManager indexManager;
 
     @Override
     public void onApplicationEvent(ApplicationReadyEvent event) {
         IndexOperations indexOperations = elasticsearchOperations.indexOps(ProductDocument.class);
         if (indexOperations.exists()) {
+            if (!indexOperations.putMapping()) {
+                throw new IllegalStateException("Product index mapping update was not acknowledged");
+            }
             log.info("Elasticsearch index already exists: {}", ProductDocument.INDEX_NAME);
             return;
         }
-        indexOperations.createWithMapping();
+        indexManager.create();
         log.info("Elasticsearch index created: {}", ProductDocument.INDEX_NAME);
     }
 }
